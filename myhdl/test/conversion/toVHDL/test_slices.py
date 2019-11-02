@@ -153,18 +153,15 @@ def tb_slice(DATA_IN, MODE, SLICE, DATA_VERIFY):
 	inst_uut = slice_vectors(clk, SLICE, mode, data_out, data_in)
 
 	@instance
-	def clkgen():
-		while 1:
-			yield delay(10)
-			clk.next = not clk
-
-	@instance
 	def stimulus():
 		data_in.next = DATA_IN
 		data_check.next = DATA_VERIFY
 		mode.next = MODE
-		yield clk.posedge
-		yield clk.posedge
+		clk.next = 0
+		yield delay(10)
+		clk.next = not clk
+		yield delay(10)
+		clk.next = not clk
 		if data_out == data_check:
 			print("PASS: case: %s" % mode)
 			pass
@@ -184,19 +181,18 @@ def tb_slice_func(DATA_IN, MODE, SLICE, DATA_VERIFY, f_convert, uut):
 
 	inst_uut = uut(clk, mode, data_out, data_in, f_convert)
 
-	@instance
-	def clkgen():
-		while 1:
-			yield delay(10)
-			clk.next = not clk
 
 	@instance
 	def stimulus():
 		data_in.next = DATA_IN
 		data_check.next = DATA_VERIFY
 		mode.next = MODE
-		yield clk.posedge
-		yield clk.posedge
+
+		clk.next = 0
+		yield delay(10)
+		clk.next = not clk
+		yield delay(10)
+		clk.next = not clk
 		if data_out == data_check:
 			print("PASS: case: %s" % mode)
 			pass
