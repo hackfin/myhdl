@@ -325,6 +325,8 @@ class _Block(object):
             converter = myhdl.conversion._toVHDL.toVHDL
         elif hdl.lower() == 'verilog':
             converter = myhdl.conversion._toVerilog.toVerilog
+        elif hdl.lower() == 'yosys_module':
+            converter = myhdl.conversion._toYosys.toYosysModule
         else:
             raise BlockInstanceError('unknown hdl %s' % hdl)
 

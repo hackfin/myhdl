@@ -1,4 +1,5 @@
-FROM ghdl/ghdl:buster-gcc-7.2.0
+#FROM ghdl/synth:beta
+FROM debian:buster-slim
 
 RUN apt-get update --allow-releaseinfo-change ; \
 	apt-get install -y make git wget bzip2 \
