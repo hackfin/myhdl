@@ -303,7 +303,7 @@ class _Block(object):
         self._clear()
         return myhdl.conversion.analyze(self)
 
-    def convert(self, hdl='Verilog', **kwargs):
+    def convert(self, hdl='Verilog', context = None, **kwargs):
         """Converts this BlockInstance to another HDL
 
         Args:
@@ -327,6 +327,8 @@ class _Block(object):
             converter = myhdl.conversion._toVerilog.toVerilog
         elif hdl.lower() == 'yosys_module':
             converter = myhdl.conversion._toYosys.toYosysModule
+            print("Setting context", context)
+            setattr(converter, 'design', context)
         else:
             raise BlockInstanceError('unknown hdl %s' % hdl)
 
@@ -355,7 +357,8 @@ class _Block(object):
             sim = self
             #if self._config_sim['trace']:
             #    sim = myhdl.traceSignals(self)
-            self.sim = myhdl._Simulation.Simulation(sim)
+            # This messing with globals is ugly.
+            self.sim = myhdl._Simulation.Simulation(myhdl.traceSignals.timescale, sim)
         self.sim.run(duration, quiet)
 
     def quit_sim(self):

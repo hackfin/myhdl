@@ -1,3 +1,4 @@
+"""Temporary auxiliary module for debugging purposes. Volatile."""
 
 import ast
 from myhdl.conversion._misc import _ConversionMixin
@@ -32,8 +33,6 @@ class _AnnotateTypesVisitor(ast.NodeVisitor, _ConversionMixin):
 
 	def visit_Attribute(self, node):
 		self.generic_visit(node)
-		# node.vhd = inferVhdlObj(node.obj)
-		# node.vhdOri = copy(node.vhd)
 
 	def visit_Assert(self, node):
 		self.visit(node.test)
@@ -42,16 +41,6 @@ class _AnnotateTypesVisitor(ast.NodeVisitor, _ConversionMixin):
 	def visit_AugAssign(self, node):
 		self.visit(node.target)
 		self.visit(node.value)
-		# if isinstance(node.op, (ast.BitOr, ast.BitAnd, ast.BitXor)):
-			# node.value.vhd = copy(node.target.vhd)
-			# node.vhdOri = copy(node.target.vhd)
-		# elif isinstance(node.op, (ast.RShift, ast.LShift)):
-			# node.value.vhd = vhd_int()
-			# node.vhdOri = copy(node.target.vhd)
-		# else:
-			# node.left, node.right = node.target, node.value
-			# self.inferBinOpType(node)
-		# node.vhd = copy(node.target.vhd)
 
 	def visit_Assign(self, node):
 		lhs = node.targets[0]

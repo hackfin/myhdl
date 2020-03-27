@@ -65,6 +65,8 @@ def _flatten(*args):
 
 _error.MultipleSim = "Only a single Simulation instance is allowed"
 
+_lookup = { '1ps' : "000", '10ps' : "00", '100ps' : "0", '1ns' : '' }
+
 
 class Simulation(object):
 
@@ -76,7 +78,7 @@ class Simulation(object):
     """
     _no_of_instances = 0
 
-    def __init__(self, *args):
+    def __init__(self, timescale, *args):
         """ Construct a simulation object.
 
         *args -- list of arguments. Each argument is a generator or
@@ -92,6 +94,7 @@ class Simulation(object):
         self._finished = False
         del _futureEvents[:]
         del _siglist[:]
+        self.timescale = timescale
 
     def _finalize(self):
         cosims = self._cosims
@@ -140,6 +143,11 @@ class Simulation(object):
         _pop = waiters.pop
         _append = waiters.append
         _extend = waiters.extend
+
+        try:
+            unitstring = _lookup[self.timescale]
+        except:
+            raise SimulationError("Unsupported timescale %s" % self.timescale)
 
         while 1:
             try:
@@ -190,7 +198,7 @@ class Simulation(object):
                     _futureEvents.sort(key=itemgetter(0))
                     t = _simulator._time = _futureEvents[0][0]
                     if tracing:
-                        print("#%s" % t, file=tracefile)
+                        print("#%s%s" % (t, unitstring), file=tracefile)
                     if cosims:
                         for cosim in cosims:
                             cosim._put(t)

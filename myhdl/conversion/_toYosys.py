@@ -79,10 +79,10 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		a, b = node.left, node.right
 		self.visit(a)
 		self.visit(b)
-		l = a.syn.q.get().width
+		l = a.syn.q.size()
 		# print("Add wire with name %s, size %d" % (name, l))
 		sm = SynthesisMapper(SM_WIRE)
-		sm.q = m.addWire(None, l)
+		sm.q = m.addSignal(None, l)
 		name = NEW_ID(__name__, node, "binop")
 		m.apply_binop(name, node.op, a.syn.q, b.syn.q, sm.q)
 		node.syn = sm
@@ -116,9 +116,9 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		if not hasattr(rhs, "obj"):
 			self.dbg(node, REDBG, "ASSIGN VAR", "assign to type %s" % (type(rhs)))
 		elif isinstance(rhs.obj, _Signal):
-			wsrc = self.context.wires[rhs.obj._name]
+			src = self.context.wires[rhs.obj._name]
 		else:
-			wsrc = rhs.syn.q
+			src = rhs.syn.q
 
 		if self.state != S_MUX:
 
@@ -126,12 +126,11 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				# TODO: dst
 				self.dbg(node, REDBG, "VAR ASSIGN", "assign to type %s" % (type(lhs)))
 			elif isinstance(lhs.obj, _Signal):
-				dst = Signal(self.context.wires[lhs.obj._name])
+				dst = self.context.wires[lhs.obj._name]
 				self.dbg(node, BLUEBG, "ASSIGN", "assign to type %s" % (type(lhs.obj)))
 			else:
 				self.dbg(node, REDBG, "CONST ASSIGN", "assign to type %s" % (type(lhs)))
 
-			src = Signal(wsrc)
 		
 			if dst.size() > src.size():
 				src.extend_u0(dst.size())
@@ -142,8 +141,10 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			m.connect(dst, src)
 
 		else:
-			node.syn = to_driver(rhs)
-			# self.dbg(node, REDBG, "     _MUX_ASSIGN", "assign to %s type %s" % (lhs.obj._name, type(rhs)))
+			try:
+				node.syn = to_driver(rhs)
+			except AttributeError:
+				self.dbg(node, REDBG, "Failure", "assign to %s type %s" % (lhs.obj._name, type(rhs)))
 			node.driver = lhs.obj._name
 
 #	def visit_AugAssign(self, node):
@@ -162,10 +163,10 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		self.generic_visit(node)
 		a = node.left
 		b = node.comparators[0]
-		l = a.syn.q.get().width
+		l = a.syn.q.size()
 		if l > 1 or isinstance(b.value, ast.Name):
 			sm = SynthesisMapper(SM_BOOL)
-			q = self.context.addWire(name, 1)
+			q = self.context.addSignal(name, 1)
 			op = node.ops[0]
 			name = NEW_ID(__name__, node, "binop2")
 			# print("apply_binop() name %s" % (name))
@@ -175,9 +176,10 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			node.defer = DEFER_MUX
 			sm = SynthesisMapper(SM_BOOL)
 			if b.value in [True, 1]:
+				self.raiseError(node, "FIXME %s" % (type(a.value)))
 				sm.q = a
 			elif b.value in [False, 0]:
-				sm.q = self.context.addWire(None, 1)
+				sm.q = self.context.addSignal(None, 1)
 				name = NEW_ID(__name__, node, "not")
 				sin = SigBit(a.syn.q)
 				self.context.addNotGate(name, sin, SigBit(sm.q))
@@ -188,7 +190,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 
 	def visit_Num(self, node):
 		sm = SynthesisMapper(SM_NUM)
-		sm.q = Const(node.value)
+		sm.q = Signal(Const(node.value))
 		node.syn = sm
 #
 #	def visit_Str(self, node):
@@ -212,7 +214,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				other = i[1]
 				if other:
 					self.dbg(node, REDBG, "TIE_DEFAULT", "Tie to default signal %s" % n)
-					defsig = Signal(self.context.wires[n])
+					defsig = self.context.wires[n]
 					self.context.connect(other, defsig)
 				else:
 					self.dbg(node, REDBG, "TIE_DEFAULT", "Signal has default: %s" % n)
@@ -341,8 +343,12 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 #	def visit_Return(self, node):
 #		print(_n())
 
-#	def visit_Subscript(self, node):
-#		print(_n())
+	def visit_Subscript(self, node):
+		if isinstance(node.slice, ast.Slice):
+			self.accessSlice(node)
+		else:
+			self.accessIndex(node)
+	
 
 #	def visit_While(self, node):
 #		print(_n())
@@ -390,36 +396,37 @@ class _ConvertAlwaysDecoVisitor(_ConvertVisitor):
 	def visit_FunctionDef(self, node, *args):
 		def handle_dff(m, stmt, clk, clkpol = True):
 			for name, sig in stmt.syn.drivers.items():
-				gsig = Signal(m.wires[name])
+				gsig = m.wires[name]
 				l = gsig.size()
 				sig_ff = m.addSignal(PID(name + "_ff"), l)
-				clk = Signal(m.wires[clk._name])
+				clk = m.wires[clk._name]
 				m.addDff(self.genid(node, name), clk, sig[0], sig_ff, clkpol)
 				m.connect(gsig, sig_ff)
 	
 		assert self.tree.senslist
+		m = self.context
 		self.cur_module = node.name
 		senslist = self.tree.senslist
 		senslist = self.manageEdges(node.body[-1], senslist)
 		singleEdge = (len(senslist) == 1) and isinstance(senslist[0], _WaiterList)
 		if singleEdge:
 			clknode = senslist[0]
-			print(dir(clknode))
-			raise AssertionError
 			clk = clknode.sig
+			if isinstance(clknode, _PosedgeWaiterList):
+				clkpol = True
+			elif isinstance(clknode, _NegedgeWaiterList):
+				clkpol = False
+			else:
+				self.raiseError(clknode, "Invalid clk type")
+
 			self.dbg(node, VIOBG, "PROCESS", "%s() Single edge:" % self.tree.name + repr(clk))
 			print(clk)
 			self.cur_clk = clk._name
-			clkpol = True if clknode.polarity == 1 else False
-			clk = Signal(m.wires[self.cur_clk])
-
 		else:
 			raise Synth_Nosupp("Can't handle this YET")
 
 		self.handle_toplevel_process(node, handle_dff, clk, clkpol)
 		self.tie_defaults(node)
-
-
 
 
 class _ConvertAlwaysSeqVisitor(_ConvertVisitor):
@@ -429,32 +436,32 @@ class _ConvertAlwaysSeqVisitor(_ConvertVisitor):
 
 	def visit_FunctionDef(self, node, *args):
 		def handle_dff(m, stmt, reset, clk, clkpol = True):
-			clk = Signal(m.wires[clk._name])
+			clk = m.wires[clk._name]
 			for name, sig in stmt.syn.drivers.items():
-				gsig = Signal(m.wires[name])
+				gsig = m.wires[name]
 				l = gsig.size()
 				sig_ff = m.addSignal(PID(name + "_ff"), l)
 				y = m.addSignal(PID(name + "_rst"), l)
-				reset_val = Const(m.defaults[name], l) # Value when in reset
+				reset_val = Signal(Const(m.defaults[name], l)) # Value when in reset
 				# Create synchronous reset circuit
-				rst = Signal(m.wires[reset._name])
+				rst = m.wires[reset._name]
 				if reset.active:
-					m.addMux(self.genid(node, name + "_rst"), Signal(reset_val), sig[0], rst, y)
+					m.addMux(self.genid(node, name + "_rst"), sig[0], reset_val, rst, y)
 				else:
-					m.addMux(self.genid(node, name + "_!rst"), sig[0], Signal(reset_val), rst, y)
+					m.addMux(self.genid(node, name + "_!rst"), reset_val, sig[0], rst, y)
 
 				m.addDff(self.genid(node, name), clk, y, sig_ff, clkpol)
 
 				m.connect(gsig, sig_ff)
 
 		def handle_adff(m, stmt, reset, clk, clkpol = True):
-			clk = Signal(m.wires[clk._name])
+			clk = m.wires[clk._name]
 			for name, sig in stmt.syn.drivers.items():
-				gsig = Signal(m.wires[name])
+				gsig = m.wires[name]
 				l = gsig.size()
 				sig_ff = m.addSignal(PID(name + "_ff"), l)
 				reset_val = Const(m.defaults[name], l) # Value when in reset
-				arst = Signal(m.wires[reset._name])
+				arst = m.wires[reset._name]
 				m.addAdff(self.genid(node, name), clk, arst, sig[0], sig_ff, reset_val.get(), \
 					clkpol, reset.active)
 
@@ -505,7 +512,7 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 			if isinstance(stmt, ast.If):
 				for name, sig in stmt.syn.drivers.items():
 					print("wire %s:" % name)
-					gsig = Signal(m.wires[name])
+					gsig = m.wires[name]
 					m.connect(gsig, sig[0])
 					self.dbg(stmt, REDBG, "DRIVERS", name)
 
@@ -515,7 +522,6 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 		else:
 			prev = self.state
 			self.state = S_MUX
-
 
 			self.generic_visit(node)
 
@@ -530,15 +536,13 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 			self.state = prev
 
 
-def convert_rtl(hierarchy, func):
+def convert_rtl(hierarchy, func, design):
 	arglist = _flatten(hierarchy.top)
 	_checkArgs(arglist)
 	genlist = _analyzeGens(arglist, hierarchy.absnames)
 	siglist, memlist = _analyzeSigs(hierarchy.hierarchy, hdl='VHDL')
 
 	_annotateTypes(genlist)
-
-	design = Design()
 
 	func._inferInterface()
 
@@ -574,10 +578,10 @@ def convert_rtl(hierarchy, func):
 
 class YosysModuleConvertor(object):
 	def __init__(self):
-		self.name = "Undefined"
+		self.name = None
+		self.design = None
 
 	def __call__(self, func, *args, **kwargs):
-		print(kwargs)
 
 		if self.name is None:
 			name = func.func.__name__
@@ -594,8 +598,6 @@ class YosysModuleConvertor(object):
 		_slice_constDict.clear()
 		# _enumPortTypeSet = set()
 
-		design = convert_rtl(h, func)
-
-		display_rtl(design)
+		convert_rtl(h, func, self.design)
 
 toYosysModule = YosysModuleConvertor()

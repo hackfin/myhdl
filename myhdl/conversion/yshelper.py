@@ -59,6 +59,10 @@ def OBJ_ID(name, src, ext):
 def Signal(x):
 	return ys.SigSpec(x.get())
 
+def ConstSignal(x, l):
+	c = Const(x, l)
+	return ys.SigSpec(c.get())
+
 def SigBit(x):
 	if isinstance(x, Wire):
 		return ys.SigBit(x.get())
@@ -68,8 +72,9 @@ def SigBit(x):
 
 class Design:
 	"Simple design wrapper"
-	def __init__(self):
+	def __init__(self, name="top"):
 		self.design = ys.Design()
+		self.name = name
 
 	def get(self):
 		return self.design
@@ -78,6 +83,25 @@ class Design:
 		print("Adding module with name:", name)
 		m = self.design.addModule(ID(name))
 		return Module(m)
+
+	def display_rtl(self, pdf = False):
+		"Display first stage RTL"
+		design = self.design
+		print("Display...")
+		ys.run_pass("ls", design)
+		if pdf:
+			fmt = "-format pdf"
+		else:
+			fmt = ""
+		ys.run_pass("show %s -prefix %s" % (fmt, self.name), design)
+
+	def write_verilog(self, name, rename_default = False):
+		"Write verilog"
+		design = self.design
+		m = design.top_module()
+		if rename_default:
+			design.rename(m, ys.IdString("\\uut"))
+		ys.run_pass("write_verilog %s_mapped.v" % name, design)
 
 class Wire:
 	"Tight wire wrapper"
@@ -165,11 +189,8 @@ class Module:
 		return getattr(self.module, name)
 
 	def apply_binop(self, name, op, a, b, q):
-		sa = ys.SigSpec(a.get())
-		sb = ys.SigSpec(b.get())
-		sq = ys.SigSpec(q.get())
 		print("ADDING OBJECT", name)
-		self._opmap[type(op)](self.module, name, sa, sb, sq)
+		self._opmap[type(op)](self.module, name, a, b, q)
 
 	def addWire(self, name, n, public=False):
 		# print(type(name))
@@ -189,8 +210,8 @@ class Module:
 		# print("adding wire '%s'" % (name))
 		return Wire(self.module.addWire(name, n))
 
-	def addSignal(self, name, n):
-		w = self.addWire(name, n)
+	def addSignal(self, name, n, public = False):
+		w = self.addWire(name, n, public)
 		return ys.SigSpec(w.get())
 
 	def collectWires(self, sigs, sigdict):
@@ -211,17 +232,17 @@ class Module:
 			i += 1
 
 			initvalues[name] = sig._init
-			d[name] = w
+			d[name] = Signal(w)
 
 		for s in sigs:
 			n = s._name
 			if not n in sigdict:
 				if isinstance(s._val, EnumItemType):
-					d[n] = self.addWire(n, s._nrbits)
+					d[n] = self.addSignal(n, s._nrbits)
 				else:
 					print("Internal Wire %s type %s" % (n, repr(s._type)))
 					l = get_size(s)
-					d[n] = self.addWire(n, l)
+					d[n] = self.addSignal(n, l)
 
 				initvalues[n] = s._init
 
@@ -257,20 +278,7 @@ def run_synth_ecp5(design):
 	ys.run_pass("show -prefix syn", design)
 
 
-def display_rtl(design):
-	design = design.get()
-	print("Display...")
-	ys.run_pass("ls", design)
-	ys.run_pass("show", design)
-#	ys.run_pass("check", design)
-#	ys.run_pass("deminout", design)	
-#	ys.run_pass("wreduce", design)	
-#	ys.run_pass("cd $test_counter", design)	
-#	ys.run_pass("ls", design)	
-#	ys.run_pass("debug opt_expr", design)	
-#	ys.run_pass("write_ilang syntest.il", design)	
-#	ys.run_pass("debug opt_clean", design)	
-	# run_synth_ecp5(design)
+
 
 def dump(n):
 	if isinstance(n, ast.Num):
@@ -280,18 +288,18 @@ def dump(n):
 
 def mux_input(x, templ):
 	if isinstance(x, EnumItemType):
-		x = Const(int(x), templ.width)
+		x = ConstSignal(int(x), templ.size())
 	elif isinstance(x, int):
-		x = Const(int(x), 32)
+		x = ConstSignal(int(x), 32)
 	elif isinstance(x, bool):
-		x = Const(int(x), 1)
+		x = ConstSignal(int(x), 1)
 	elif isinstance(x, ast.Num):
-		x = Const(int(x.n), templ.width)
+		x = ConstSignal(int(x.n), templ.size())
 	elif isinstance(x, Const):
 		x = x.syn.q
-		x.extu(templ.width)
+		x.extu(templ.size())
 	elif isinstance(x, Wire):
-		if x.width == templ.width:
+		if x.size() == templ.size():
 			pass
 		else:
 			raise AssertionError("Not of same size")
@@ -299,23 +307,17 @@ def mux_input(x, templ):
 		print(type(x))
 		x = x.syn.q
 
-	return Signal(x)
+	return x
 
 def to_driver(x):
 
 	if isinstance(x, bool):
-		x = Const(int(x), 1)
+		x = ConstSignal(int(x), 1)
 		t = SM_BOOL
 	elif isinstance(x, int):
-		x = Const(int(x), 32)
+		x = ConstSignal(int(x), 32)
 		t = SM_WIRE
 	else:
-		l = 0
-		if type(x.syn.q).__name__ == 'Wire':
-			l = x.syn.q.width
-		else:
-			l = x.syn.q.size()
-
 		# print("=====> RHS: %s[%d:]" % (type(x).__name__, l), type(x.syn.q).__name__)
 		return x.syn
 
@@ -380,8 +382,19 @@ Used for separation of common functionality of visitor classes"""
 			assert hasattr(obj, node.attr)
 			sm = SynthesisMapper(SM_WIRE)
 			e = getattr(obj, node.attr)
-			sm.q = Const(int(e), obj._nrbits)
+			sm.q = ConstSignal(int(e), obj._nrbits)
 			node.syn = sm
+
+
+	def accessSlice(self, node):
+		pass
+
+	def accessIndex(self, node):
+		sm = SynthesisMapper(SM_WIRE)
+		self.visit(node.value)
+		sig = node.value.syn.q
+		sm.q = sig.extract(node.slice.value.n, 1)
+		node.syn = sm
 
 	def tie_defaults(self, node):
 		"Tie undefined 'other' inputs to defaults in synchronous processes"
@@ -421,7 +434,7 @@ Used for separation of common functionality of visitor classes"""
 			if isinstance(t, ast.Assign):
 				sigid = t.targets[0].obj._name
 				target = wires[sigid]
-				l = target.width
+				l = target.size()
 				if sigid in casemap:
 					self.dbg(t, REDBG, "DRV_OBSOLETE",  "ineffective previous assignment to '%s'" % sigid)
 				b = t.value
@@ -454,7 +467,7 @@ Used for separation of common functionality of visitor classes"""
 		for i, test in enumerate(node.tests):
 			t = test[0]
 			self.dbg(t, GREEN, "CASE[%d]" % i,  "")
-			cc.append(Signal(t.syn.q))
+			cc.append(t.syn.q)
 			casemap = {}
 			self.handle_mux_statement(test[1], casemap)
 
@@ -492,11 +505,11 @@ Used for separation of common functionality of visitor classes"""
 			for j in item:
 				if j:
 					self.dbg(t, REDBG, "MUX_INPUT",  "create mux input " + wn + " type %s" % type(w))
-					print("Width:", w.width)
+					print("Width:", w.size())
 					varray.append(j)
 						
 					
-			y = m.addSignal(self.genid(node, wn + "_out"), w.width)
+			y = m.addSignal(self.genid(node, wn + "_out"), w.size())
 
 			name = NEW_ID(__name__, node, "pmux")
 
@@ -506,7 +519,7 @@ Used for separation of common functionality of visitor classes"""
 			if wn in other_map:
 				a = other_map[wn]
 			else:
-				a = m.addSignal(self.genid(node, wn + "_other"), w.width)
+				a = m.addSignal(self.genid(node, wn + "_other"), w.size())
 
 			m.addPmux(name, a, varray, cc, y)
 			sm.drivers[wn] = [ y, None ]
@@ -532,6 +545,8 @@ Used for separation of common functionality of visitor classes"""
 			cond = test.syn.q
 			if isinstance(cond, ast.Name):
 				s = Signal(m.wires[cond.id])
+			elif isinstance(cond, ys.SigSpec):
+				s = cond
 			elif isinstance(cond, Wire):
 				s = Signal(cond)
 			else:
@@ -545,7 +560,7 @@ Used for separation of common functionality of visitor classes"""
 				print("   %s ===> %s" % (n, repr(i)))
 
 				target = m.wires[n]
-				l = target.width
+				l = target.size()
 
 
 				mux_b = i[0]
