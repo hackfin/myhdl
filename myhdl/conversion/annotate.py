@@ -15,7 +15,7 @@ class _AnnotateTypesVisitor(ast.NodeVisitor, _ConversionMixin):
 		self.depth = 0
 
 	def generic_visit(self, node):
-		self.dbg(node, ANNOTATE, "ANNOTATE", type(node).__name__)
+		# self.dbg(node, ANNOTATE, "ANNOTATE", type(node).__name__)
 		self.depth += 1
 		ast.NodeVisitor.generic_visit(self, node)
 		self.depth -= 1
@@ -83,7 +83,8 @@ class _AnnotateTypesVisitor(ast.NodeVisitor, _ConversionMixin):
 		pass
 
 	def visit_Name(self, node):
-		self.dbg(node, ANNOTATE, "ANNOTATE", "--- Name: %s" % node.id)
+		#self.dbg(node, ANNOTATE, "ANNOTATE", "--- Name: %s" % node.id)
+		pass
 
 	def visit_Num(self, node):
 		pass

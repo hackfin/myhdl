@@ -40,20 +40,20 @@ def resize_vectors(clk, mode, data_out, data_in, IMM):
 
 
 @block
-def resize_vectors_op(clk, mode, data_out, data_in, IMM):
+def resize_vectors_op(clk, mode, data_out, data_in, imm):
 	"Resize signed and unsigned test case #316"
 	@always_comb
 	def worker():
 		if mode == t_lmode.LB:
-			data_out.next = data_in[8:].signed() | IMM
+			data_out.next = data_in[8:].signed() | imm
 		elif mode == t_lmode.LH:
-			data_out.next = data_in[16:].signed() | IMM
+			data_out.next = data_in[16:].signed() | imm
 		elif mode == t_lmode.LBU:
-			data_out.next = data_in[8:] | IMM
+			data_out.next = data_in[8:] | imm
 		elif mode == t_lmode.LHU:
-			data_out.next = data_in[16:] | IMM
+			data_out.next = data_in[16:] | imm
 		else:
-			data_out.next = data_in | IMM
+			data_out.next = data_in | imm
 
 	return instances()
 
@@ -241,8 +241,8 @@ To reproduce manually, run this:
 
 """
 
-	uut, din, imm, mode, dout = CHECK_LIST[10]
-	tb_resize = tb_resize_vectors(uut, din, imm, mode, dout)
+	succeed, uut, din, imm, m, dout = CHECK_LIST[10]
+	tb_resize = tb_resize_vectors(uut, din, imm, m, dout)
 	tb_resize.convert("VHDL")
 
 	return tb_resize

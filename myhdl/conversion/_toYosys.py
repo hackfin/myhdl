@@ -18,11 +18,14 @@ from myhdl.conversion._misc import (_error, _kind, _context,
 from myhdl.conversion._analyze import (_analyzeSigs, _analyzeGens, _analyzeTopFunc,
 									   _Ram, _Rom, _enumTypeSet, _slice_constDict)
 
-from myhdl import intbv, EnumType
+from myhdl import intbv, EnumType, concat
 
 from myhdl.conversion.yshelper import *
 
 import inspect
+
+# To write out testbench for post-map output:
+from myhdl.conversion._toVerilog import _writeTestBench
 
 _n  = lambda: "CALL \t" + inspect.stack()[1][3] + "()"
 
@@ -113,48 +116,79 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		# print("lhs", lhs.value)
 		self.visit(rhs)
 
+		t = SM_WIRE
+
+
 		if not hasattr(rhs, "obj"):
-			self.dbg(node, REDBG, "ASSIGN VAR", "assign to type %s" % (type(rhs)))
-		elif isinstance(rhs.obj, _Signal):
-			src = self.context.wires[rhs.obj._name]
+			name = rhs.id
+			q = self.variables[name]
+			raise Synth_Nosupp("Can't handle this YET")
+		elif isinstance(rhs, bool):
+			src = ConstSignal(int(rhs), 1)
+			t = SM_BOOL
+		elif isinstance(rhs, int):
+			src = ConstSignal(rhs, rhs.bit_length())
 		else:
 			src = rhs.syn.q
 
-		if self.state != S_MUX:
+		if not hasattr(lhs, "obj"):
+			name = lhs.id
+			self.variables[name] = rhs.syn
+			self.dbg(node, BLUEBG, "ASSIGN", "assign to variable %s" % (name))
+			dst = None
+		elif isinstance(lhs.obj, _Signal):
+			dst = self.context.wires[lhs.obj._name]
+			self.dbg(node, BLUEBG, "ASSIGN", "assign to type %s" % (type(lhs.obj)))
 
-			if not hasattr(lhs, "obj"):
-				# TODO: dst
-				self.dbg(node, REDBG, "VAR ASSIGN", "assign to type %s" % (type(lhs)))
-			elif isinstance(lhs.obj, _Signal):
-				dst = self.context.wires[lhs.obj._name]
-				self.dbg(node, BLUEBG, "ASSIGN", "assign to type %s" % (type(lhs.obj)))
-			else:
-				self.dbg(node, REDBG, "CONST ASSIGN", "assign to type %s" % (type(lhs)))
-
-		
+			# Size handling and sign extension:
 			if dst.size() > src.size():
-				src.extend_u0(dst.size())
+				self.dbg(node, REDBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
+				src.extend_u0(dst.size(), rhs.syn.is_signed)
 			elif dst.size() < src.size():
-				self.raiseError(node, "Overflow const value: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
+				self.raiseError(node, "OVERFLOW const value: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
 
+		else:
+			raise Synth_Nosupp("Can't handle this YET")
+
+		sm = SynthesisMapper(t)
+		sm.q = src
+
+		if self.state == S_MUX:
+			node.driver = lhs.obj._name
+		elif dst:
 			m = self.context
 			m.connect(dst, src)
 
-		else:
-			try:
-				node.syn = to_driver(rhs)
-			except AttributeError:
-				self.dbg(node, REDBG, "Failure", "assign to %s type %s" % (lhs.obj._name, type(rhs)))
-			node.driver = lhs.obj._name
+		node.syn = sm
 
+	
 #	def visit_AugAssign(self, node):
 #		print(_n())
 #
 #	def visit_Break(self, node):
 #		print(_n())
 #
-#	def visit_Call(self, node):
-#		print(_n())
+	def visit_Call(self, node):
+		fn = node.func
+		f = self.getObj(fn)
+
+		if f == intbv.signed:
+			arg = fn.value
+			self.visit(arg)
+			arg.syn.is_signed = True
+			node.syn = arg.syn # Pass on
+		elif f is concat:
+			self.dbg(node, GREEN, "CONCAT", "")
+			q = self.context.addSignal(None, 0)
+			for arg in reversed(node.args):
+				self.visit(arg)
+				q.append(arg.syn.q)
+			sm = SynthesisMapper(SM_WIRE)
+			sm.q = q
+			node.syn = sm
+		else:
+			self.raiseError(node, "Can't synthesize function %s" % f.__name__)
+			
 
 	def visit_Compare(self, node):
 		name = None
@@ -175,16 +209,18 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		else:
 			node.defer = DEFER_MUX
 			sm = SynthesisMapper(SM_BOOL)
-			if b.value in [True, 1]:
-				self.raiseError(node, "FIXME %s" % (type(a.value)))
-				sm.q = a
-			elif b.value in [False, 0]:
-				sm.q = self.context.addSignal(None, 1)
-				name = NEW_ID(__name__, node, "not")
-				sin = SigBit(a.syn.q)
-				self.context.addNotGate(name, sin, SigBit(sm.q))
+			if hasattr(b, 'value'):
+				if b.value in [True, 1]:
+					sm.q = a
+				elif b.value in [False, 0]:
+					sm.q = self.context.addSignal(None, 1)
+					name = NEW_ID(__name__, node, "not")
+					sin = SigBit(a.syn.q)
+					self.context.addNotGate(name, sin, SigBit(sm.q))
+				else:
+					self.raiseError(node, "Unsupported right hand value %s" % (type(b.value)))
 			else:
-				self.raiseError(node, "Unsupported right hand type %s" % (type(b.value)))
+				self.raiseError(node, "Unsupported right hand type %s" % (type(b)))
 				
 		node.syn = sm
 
@@ -226,7 +262,6 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 
 			if hasattr(node, "isFullCase"):
 				if node.isFullCase:
-					print("SYNC_MAP_MUX_FULLCASE")
 					self.mapToMux(node, True)
 				else:
 					# print("SYNC_MAP_MUX")
@@ -315,7 +350,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		if node.id in self.tree.vardict:
 			d = m.wires
 			if node.id in self.variables:
-				pass
+				node.syn = self.variables[node.id]
 			else:
 				sm = SynthesisMapper(SM_VAR)
 				self.variables[node.id] = None
@@ -420,7 +455,7 @@ class _ConvertAlwaysDecoVisitor(_ConvertVisitor):
 				self.raiseError(clknode, "Invalid clk type")
 
 			self.dbg(node, VIOBG, "PROCESS", "%s() Single edge:" % self.tree.name + repr(clk))
-			print(clk)
+			# print(clk)
 			self.cur_clk = clk._name
 		else:
 			raise Synth_Nosupp("Can't handle this YET")
@@ -536,11 +571,12 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 			self.state = prev
 
 
-def convert_rtl(hierarchy, func, design):
+def convert_rtl(hierarchy, func, tbname, design, write_tb, trace):
 	arglist = _flatten(hierarchy.top)
 	_checkArgs(arglist)
 	genlist = _analyzeGens(arglist, hierarchy.absnames)
-	siglist, memlist = _analyzeSigs(hierarchy.hierarchy, hdl='VHDL')
+	siglist, memlist = _analyzeSigs(hierarchy.hierarchy, hdl='Verilog')
+
 
 	_annotateTypes(genlist)
 
@@ -551,28 +587,27 @@ def convert_rtl(hierarchy, func, design):
 	m.collectWires(siglist, func.argdict)
 
 	for tree in genlist:
-		print("----------------------------------------------------------------------------")
 		if tree.kind == _kind.ALWAYS:
-			print("ALWAYS")
 			Visitor = _ConvertAlwaysVisitor
 		elif tree.kind == _kind.INITIAL:
-			print("INITIAL")
 			Visitor = _ConvertInitialVisitor
 		elif tree.kind == _kind.SIMPLE_ALWAYS_COMB:
-			print("SIMPLE_ALWAYS_COMB")
 			Visitor = _ConvertSimpleAlwaysCombVisitor
 		elif tree.kind == _kind.ALWAYS_DECO:
-			print("ALWAYS_DECO")
 			Visitor = _ConvertAlwaysDecoVisitor
 		elif tree.kind == _kind.ALWAYS_SEQ:
-			print("ALWAYS_SEQ")
 			Visitor = _ConvertAlwaysSeqVisitor
 		else:  # ALWAYS_COMB
-			print("ALWAYS_COMB")
 			Visitor = _ConvertAlwaysCombVisitor
 
 		v = Visitor(m, tree)
 		v.visit(tree)
+
+	if write_tb:
+		tbfile = open("tb_%s_mapped.v" % tbname, 'w')
+		func.name = tbname # Hack to overwrite DUT name
+		_writeTestBench(tbfile, func, trace, "1ps/1ps")
+		tbfile.close()
 
 	return design
 
@@ -580,6 +615,7 @@ class YosysModuleConvertor(object):
 	def __init__(self):
 		self.name = None
 		self.design = None
+		self.trace = False
 
 	def __call__(self, func, *args, **kwargs):
 
@@ -598,6 +634,7 @@ class YosysModuleConvertor(object):
 		_slice_constDict.clear()
 		# _enumPortTypeSet = set()
 
-		convert_rtl(h, func, self.design)
+		convert_rtl(h, func, name, self.design, True, self.trace)
+
 
 toYosysModule = YosysModuleConvertor()

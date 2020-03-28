@@ -422,7 +422,11 @@ def _writeModuleFooter(f):
     print("endmodule", file=f)
 
 
-def _writeTestBench(f, intf, trace=False):
+def _writeTestBench(f, intf, trace=False, timescale_spec=False):
+    print("// MyHDL generated test bench, may be overwritten\n", file=f)
+    if timescale_spec:
+        print("// Using explicit timescale spec for co-simulation", file=f)
+        print("`timescale %s" % timescale_spec, file=f)
     print("module tb_%s;" % intf.name, file=f)
     print(file=f)
     fr = StringIO()
@@ -437,7 +441,7 @@ def _writeTestBench(f, intf, trace=False):
         else:
             print("reg %s%s;" % (r, portname), file=f)
             print("        %s," % portname, file=fr)
-        print("    %s," % portname, file=pm)
+        print("    .%s(%s)," % (portname, portname), file=pm)
     print(file=f)
     print("initial begin", file=f)
     if trace:

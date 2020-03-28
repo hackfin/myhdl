@@ -1,7 +1,7 @@
-all: iverilog
+all: yosys
 
-iverilog:
-	py.test --sim iverilog
+yosys:
+	py.test-3
 
 clean:
 	- rm *.o *.out *.v *.vhd *.pyc *~ *.vcd* *.log *_ghdl

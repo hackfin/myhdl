@@ -1,4 +1,3 @@
-from __future__ import absolute_import
 import myhdl
 from myhdl import *
 
@@ -47,14 +46,38 @@ def counter_extended(clk, ce, reset, dout, debug):
 
 	return instances()
 
-def test_counter():
-	UNIT = counter_extended
-	arst = True
 
+@block
+def lfsr8_0(clk, ce, reset, dout, debug):
+	"""LFSR with all states"""
+	x = Signal(modbv(0)[8:])
+	f = Signal(bool())
+
+	@always_seq(clk.posedge, reset)
+	def worker():
+		if ce == 1:
+			x.next = concat(x[6], x[5], x[4], x[3] ^ f, x[2] ^ f, x[1] ^ f, x[0], f)
+
+	@always_comb
+	def assign():
+		e = x[7:0] == 0
+		f.next = x[7] ^ e
+		dout.next = x
+
+	return instances()
+
+
+def test_unit():
+	UNIT = lfsr8_0
+	arst = True
 	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst))
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 200)
+
+	UNIT = counter_extended
+	run_conversion(UNIT, arst)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 200)
 	return True
 
 if __name__ == '__main__':
-	test_counter()
+	test_unit()
 

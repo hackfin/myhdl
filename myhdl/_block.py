@@ -283,7 +283,7 @@ class _Block(object):
         self.argdict = intf.argdict
 
     # Public methods
-    # The puropse now is to define the API, optimizations later
+    # The purpose now is to define the API, optimizations later
 
     def  _clear(self):
         """ Clear a number of 'global' attributes.
@@ -325,6 +325,8 @@ class _Block(object):
             converter = myhdl.conversion._toVHDL.toVHDL
         elif hdl.lower() == 'verilog':
             converter = myhdl.conversion._toVerilog.toVerilog
+# FIXME: Change plugin concept, we may want to have this optional
+# and not require a yosys installation
         elif hdl.lower() == 'yosys_module':
             converter = myhdl.conversion._toYosys.toYosysModule
             print("Setting context", context)

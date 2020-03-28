@@ -21,7 +21,7 @@ def tb_unit(uut, uut_syn, async_reset):
 	clk = Signal(bool())
 	debug, debug_syn = [ Signal(bool(0)) for i in range(2) ]
 	ce = Signal(bool())
-	dout, do_syn = [ Signal(intbv()[2:]) for i in range(2) ]
+	dout, do_syn = [ Signal(intbv()[8:]) for i in range(2) ]
 	reset = ResetSignal(0, 1, isasync = async_reset)
 
 	inst_clkgen = clkgen(clk, 20)
@@ -30,7 +30,7 @@ def tb_unit(uut, uut_syn, async_reset):
 
 	r0, r1 = [ Signal(modbv()[8:]) for i in range(2) ]
 
-	inst_lfsr0 = lfsr8(clk, reset, 0, 1, r0)
+	inst_lfsr0 = lfsr8(clk, 1, reset, 0, r0)
 
 	@always_comb
 	def assign():
@@ -57,32 +57,54 @@ def tb_unit(uut, uut_syn, async_reset):
 def mapped_uut(which, clk, ce, reset, dout, debug):
 	args = locals()
 
-	tb = "lib/tb_unit_mapped"
 	name = which.func.__name__ + "_mapped"
+
+	tb = "tb_" + name
 
 	return setupCosimulation(**locals())
 
+@block
+def mapped_wrapper(uut, clk, ce, reset, mode, data_out, data_in):
+	"Cosimulation object for yosys post-synthesis(mapping) verilog output"
+	args = locals()
 
-def run_conversion(ent, async_reset):
+	name = uut.__name__ + "_mapped"
+	tb = "tb_" + name
+
+	return setupCosimulation(**locals())
+
+def run_conversion(ent, async_reset = False, wrapper = None, **kwargs):
 	from myhdl.conversion import yshelper
 	clk = Signal(bool())
 	debug = Signal(bool(0))
 	ce = Signal(bool())
-	dout = Signal(intbv()[2:])
 	reset = ResetSignal(0, 1, isasync = async_reset)
 
-	a = ent(clk, ce, reset, dout, debug)
+	if wrapper:
+		DATA_IN = kwargs['DATA_IN']
+		DATA_OUT = kwargs['DATA_OUT']
+		MODE = kwargs['MODE']
+
+		mode = Signal(MODE)
+		data_in = Signal(modbv()[DATA_IN[1]:])
+		data_out, data_check = [ Signal(modbv()[DATA_OUT[1]:]) for i in range(2) ]
+		a = wrapper(ent, clk, ce, reset, mode, data_in, data_out, **kwargs)
+		name = ent.func.__name__
+		# name = "wrapper0"
+	else:
+		dout = Signal(intbv()[8:])
+		a = ent(clk, ce, reset, dout, debug)
+		name = ent.func.__name__
 
 	design = yshelper.Design("test")
 
 	# a.convert("verilog")
-	a.convert("yosys_module", design)
-
+	a.convert("yosys_module", design, name=name, trace=True)
 	# design.display_rtl()
-	design.write_verilog(ent.func.__name__, True)
+	design.write_verilog(name, True)
 
-
-def run_tb(tb):
+def run_tb(tb, cycles = 200000):
 	tb.config_sim(backend = 'myhdl', timescale="1ps", trace=True)
-	tb.run_sim(200000)
+	tb.run_sim(cycles)
+	tb.quit_sim() # Quit so we can run another one
 

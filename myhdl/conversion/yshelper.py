@@ -11,6 +11,7 @@ from myhdl._enum import EnumType, EnumItemType
 from myhdl._Signal import _Signal
 from myhdl import intbv, EnumType, EnumItemType
 
+
 from pyosys import libyosys as ys
 
 SM_NUM, SM_BOOL, SM_STRING, SM_WIRE, SM_RECORD, SM_VAR = range(6)
@@ -47,8 +48,7 @@ class SynthesisMapper:
 	def __init__(self, el_type):
 		self.el_type = el_type
 		self.q = None
-		self.a = None
-		self.b = None
+		self.is_signed = False
 
 def NEW_ID(name, node, ext):
 	return ys.new_id(name, node.lineno, ext)
@@ -97,10 +97,12 @@ class Design:
 
 	def write_verilog(self, name, rename_default = False):
 		"Write verilog"
+		if name == None:
+			name = "uut"
 		design = self.design
 		m = design.top_module()
 		if rename_default:
-			design.rename(m, ys.IdString("\\uut"))
+			design.rename(m, ys.IdString("\\" + name))
 		ys.run_pass("write_verilog %s_mapped.v" % name, design)
 
 class Wire:
@@ -119,7 +121,7 @@ class Const:
 	def __init__(self, value, bits = None):
 		if type(value) == type(1):
 			if bits == None:
-				self.const = ys.Const(value, 32)
+				self.const = ys.Const(value, value.bit_length())
 			else:
 				self.const = ys.Const(value, bits)
 		elif isinstance(value, intbv):
@@ -185,11 +187,9 @@ class Module:
 		self.guard = {}
 	
 	def __getattr__(self, name):
-		print("calling %s" % name)
 		return getattr(self.module, name)
 
 	def apply_binop(self, name, op, a, b, q):
-		print("ADDING OBJECT", name)
 		self._opmap[type(op)](self.module, name, a, b, q)
 
 	def addWire(self, name, n, public=False):
@@ -201,7 +201,6 @@ class Module:
 			else:
 				name = ID(name)
 		elif not name:
-			print("Create random name")
 			name = ys.new_id(__name__, lineno(), "")
 
 		if name in self.guard:
@@ -250,36 +249,6 @@ class Module:
 		self.wires = d
 		self.module.fixup_ports()
 
-def run_synth_ecp5(design):
-	YOSYS_TECHLIBS  = "/media/sandbox/usr/share/yosys"
-
-	ys.run_pass("proc", design)	
-	ys.run_pass("flatten", design)	
-	ys.run_pass("tribuf -logic", design)	
-	ys.run_pass("deminout", design)	
-	ys.run_pass("opt_expr", design)	
-	ys.run_pass("opt_clean", design)	
-	ys.run_pass("check", design)	
-	ys.run_pass("opt", design)	
-	ys.run_pass("wreduce", design)	
-	ys.run_pass("peepopt", design)	
-	ys.run_pass("opt_clean", design)	
-	ys.run_pass("share", design)	
-	ys.run_pass("techmap -map %s/cmp2lut.v -D LUT_WIDTH=4" % YOSYS_TECHLIBS)
-	ys.run_pass("dffsr2dff; dff2dffs; opt_clean")
-	ys.run_pass("dff2dffe -direct-match $_DFF_* -direct-match $__DFFS_*")
-	ys.run_pass("techmap -D NO_LUT -map %s/ecp5/cells_map.v" % YOSYS_TECHLIBS)
-	ys.run_pass("opt_expr -undriven -mux_undef; simplemap; ecp5_ffinit")
-	ys.run_pass("abc")
-	ys.run_pass("techmap -map %s/ecp5/latches_map.v" % YOSYS_TECHLIBS)
-	ys.run_pass("abc -lut 4:7 -dress")
-	ys.run_pass("clean")
-	ys.run_pass("stat", design)	
-	ys.run_pass("show -prefix syn", design)
-
-
-
-
 def dump(n):
 	if isinstance(n, ast.Num):
 		return "%d" % n.n
@@ -309,23 +278,6 @@ def mux_input(x, templ):
 
 	return x
 
-def to_driver(x):
-
-	if isinstance(x, bool):
-		x = ConstSignal(int(x), 1)
-		t = SM_BOOL
-	elif isinstance(x, int):
-		x = ConstSignal(int(x), 32)
-		t = SM_WIRE
-	else:
-		# print("=====> RHS: %s[%d:]" % (type(x).__name__, l), type(x.syn.q).__name__)
-		return x.syn
-
-	sm = SynthesisMapper(t)
-	sm.q = x
-
-	return sm
-
 class VisitorHelper:
 	"""Visitor helper class for yosys interfacing
 Used for separation of common functionality of visitor classes"""
@@ -341,6 +293,8 @@ Used for separation of common functionality of visitor classes"""
 		print("%s: %s:%d %s" % (kind + msg + OFF, self.tree.sourcefile, lineno, details))
 
 	def setAttr(self, node):
+		if node.attr != 'next':
+			self.dbg(node, REDBG, "ERROR ",  "attr " + repr(node.attr))
 		assert node.attr == 'next'
 		if isinstance(node.value, ast.Name):
 			sig = self.tree.symdict[node.value.id]
@@ -387,7 +341,26 @@ Used for separation of common functionality of visitor classes"""
 
 
 	def accessSlice(self, node):
-		pass
+		sm = SynthesisMapper(SM_WIRE)
+		self.visit(node.value)
+		sig = node.value.syn.q
+		lower, upper = node.slice.lower, node.slice.upper
+		if upper == None:
+			i = 0
+			if lower == None:
+				n = sig.size()
+			else:
+				n = lower.n
+
+		elif lower == None:
+			i = upper.n
+			n = sig.size() - upper.n
+		else:
+			i = upper.n
+			n = lower.n - upper.n
+
+		sm.q = sig.extract(i, n)
+		node.syn = sm
 
 	def accessIndex(self, node):
 		sm = SynthesisMapper(SM_WIRE)
@@ -544,7 +517,7 @@ Used for separation of common functionality of visitor classes"""
 
 			cond = test.syn.q
 			if isinstance(cond, ast.Name):
-				s = Signal(m.wires[cond.id])
+				s = m.wires[cond.id]
 			elif isinstance(cond, ys.SigSpec):
 				s = cond
 			elif isinstance(cond, Wire):
