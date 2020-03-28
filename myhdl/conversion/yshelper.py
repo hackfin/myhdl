@@ -11,7 +11,6 @@ from myhdl._enum import EnumType, EnumItemType
 from myhdl._Signal import _Signal
 from myhdl import intbv, EnumType, EnumItemType
 
-
 from pyosys import libyosys as ys
 
 SM_NUM, SM_BOOL, SM_STRING, SM_WIRE, SM_RECORD, SM_VAR = range(6)

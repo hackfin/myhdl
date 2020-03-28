@@ -67,16 +67,17 @@ def lfsr8_0(clk, ce, reset, dout, debug):
 	return instances()
 
 
-def test_unit():
-	UNIT = lfsr8_0
+def test_counter():
 	arst = True
-	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 200)
-
 	UNIT = counter_extended
 	run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 200)
-	return True
+
+def test_lfsr():
+	UNIT = lfsr8_0
+	arst = False
+	run_conversion(UNIT, arst)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 200)
 
 if __name__ == '__main__':
 	test_unit()

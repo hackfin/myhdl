@@ -360,7 +360,8 @@ class _Block(object):
             #if self._config_sim['trace']:
             #    sim = myhdl.traceSignals(self)
             # This messing with globals is ugly.
-            self.sim = myhdl._Simulation.Simulation(myhdl.traceSignals.timescale, sim)
+            self.sim = myhdl._Simulation.Simulation(sim)
+            self.sim. timescale = myhdl.traceSignals.timescale
         self.sim.run(duration, quiet)
 
     def quit_sim(self):

@@ -78,7 +78,7 @@ class Simulation(object):
     """
     _no_of_instances = 0
 
-    def __init__(self, timescale, *args):
+    def __init__(self, *args):
         """ Construct a simulation object.
 
         *args -- list of arguments. Each argument is a generator or
@@ -94,7 +94,7 @@ class Simulation(object):
         self._finished = False
         del _futureEvents[:]
         del _siglist[:]
-        self.timescale = timescale
+        self.timescale = "1ns"
 
     def _finalize(self):
         cosims = self._cosims

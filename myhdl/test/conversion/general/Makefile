@@ -1,19 +1,21 @@
 all:  vlog vcom 
 
+PYTEST ?= py.test-3
+
 ghdl:
-	py.test --sim ghdl
+	$(PYTEST) --sim ghdl
 
 vlog:
-	py.test --sim vlog
+	$(PYTEST) --sim vlog
 
 vcom:
-	py.test --sim vcom
+	$(PYTEST) --sim vcom
 
 iverilog:
-	py.test --sim iverilog
+	$(PYTEST) --sim iverilog
 
 cver:
-	py.test --sim cver
+	$(PYTEST) --sim cver
 
 clean:
 	- rm *.o *.out *.v *.vhd *.pyc *~ *.vcd* *.log *_ghdl

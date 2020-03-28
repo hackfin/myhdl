@@ -20,7 +20,11 @@ from myhdl.conversion._analyze import (_analyzeSigs, _analyzeGens, _analyzeTopFu
 
 from myhdl import intbv, EnumType, concat
 
-from myhdl.conversion.yshelper import *
+try:
+	from myhdl.conversion.yshelper import *
+except:
+	from myhdl.conversion.yshelper_dummy import *
+	
 
 import inspect
 
