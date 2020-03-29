@@ -49,6 +49,9 @@ class SynthesisMapper:
 		self.q = None
 		self.is_signed = False
 
+	def isConst(self):
+		return self.el_type == SM_NUM
+
 def NEW_ID(name, node, ext):
 	return ys.new_id(name, node.lineno, ext)
 
@@ -165,7 +168,7 @@ class Module:
 		ast.BitAnd   : ys.Module.addAnd,
 		ast.BitXor   : ys.Module.addXor,
 		ast.FloorDiv : ys.Module.addDiv,
-		# ast.Invert   : ys.Module.addNotGate,
+		ast.Invert   : ys.Module.addNot,
 		ast.Not      : ys.Module.addNot,
 		ast.UAdd     : ys.Module.addAdd,
 		ast.USub     : ys.Module.addSub,
@@ -190,6 +193,9 @@ class Module:
 
 	def apply_binop(self, name, op, a, b, q):
 		self._opmap[type(op)](self.module, name, a, b, q)
+
+	def apply_unop(self, name, op, a, q):
+		self._opmap[type(op)](self.module, name, a, q)
 
 	def addWire(self, name, n, public=False):
 		# print(type(name))
@@ -281,6 +287,35 @@ class VisitorHelper:
 	"""Visitor helper class for yosys interfacing
 Used for separation of common functionality of visitor classes"""
 
+	# Note: Python3 specific
+	_opmap_reduce_const = {
+		ast.Add      : int.__add__,
+		ast.Sub      : int.__sub__,
+		ast.Mult     : int.__mul__,
+		ast.Div      : int.__floordiv__,
+		ast.Mod      : int.__mod__,
+		ast.Pow      : int.__mod__,
+		ast.LShift   : int.__lshift__,
+		ast.RShift   : int.__rshift__,
+		ast.BitOr    : int.__or__,
+		ast.BitAnd   : int.__and__,
+		ast.BitXor   : int.__xor__,
+		ast.FloorDiv : int.__floordiv__,
+		ast.Invert   : int.__mod__,
+		ast.UAdd     : int.__add__,
+		ast.USub     : int.__sub__,
+		ast.And      : int.__and__,
+		ast.Or       : int.__or__,
+	}
+
+	def const_eval(self, node):
+		if isinstance(node, ast.BinOp):
+			l, r = node.left.n, node.right.n
+			f = self._opmap_reduce_const[type(node.op)]
+			return f(l, r)
+		else:
+			raise AssertionError("Unsupported op")
+
 	def genid(self, node, ext):
 		n = self.cur_module + "::" + type(node).__name__
 		src = "%s:%d" % (self.tree.sourcefile, node.lineno + self.tree.lineoffset)
@@ -337,7 +372,6 @@ Used for separation of common functionality of visitor classes"""
 			e = getattr(obj, node.attr)
 			sm.q = ConstSignal(int(e), obj._nrbits)
 			node.syn = sm
-
 
 	def accessSlice(self, node):
 		sm = SynthesisMapper(SM_WIRE)

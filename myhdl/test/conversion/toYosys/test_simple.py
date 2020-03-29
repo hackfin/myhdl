@@ -4,10 +4,70 @@ from myhdl import *
 from .cosim_common import *
 
 @block
+def up_counter(clk, ce, reset, counter):
+
+	@always_seq(clk.posedge, reset)
+	def worker():
+		if ce:
+			counter.next = counter + 1
+		else:
+			counter.next = counter
+
+	return instances()
+
+@block
+def simple_cases(clk, ce, reset, dout, debug):
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+	
+	@always_comb
+	def select():
+		debug.next = counter[4]
+
+		if counter == 14:
+			dout.next = (counter & ~0xf0) | 16
+		elif counter >= 25:
+			dout.next = counter[3:] | 8
+		elif counter == 26:
+			dout.next = 1 | 2 | 8
+		elif counter < 22:
+			dout.next = (counter & 3) | 4
+		else:
+			dout.next = 0
+
+
+	return instances()
+
+
+@block
+def simple_resize_cases(clk, ce, reset, dout, debug):
+	counter = Signal(modbv(0)[8:])
+	
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_comb
+	def select():
+		debug.next = counter[4]
+
+		if counter == 14:
+			dout.next = counter[2:] | 16
+		elif counter >= 25:
+			dout.next = counter[4:2] | 8
+		elif counter < 22:
+			dout.next = counter[3:1] | 4
+		else:
+			dout.next = 0
+
+
+	return instances()
+
+
+@block
 def counter_extended(clk, ce, reset, dout, debug):
 	counter = Signal(modbv(0)[8:])
-	x = Signal(modbv()[2:])
-	y = Signal(modbv()[2:])
+	x = Signal(modbv()[4:])
+	y = Signal(modbv()[4:])
 
 	d = Signal(intbv(3)[2:])
 	
@@ -16,8 +76,9 @@ def counter_extended(clk, ce, reset, dout, debug):
 		if ce:
 			debug.next = counter[4]
 			counter.next = counter + 1
-			d.next = 1
+			d.next = 2
 		else:
+			d.next = 1
 			debug.next = 0
 			counter.next = counter
 
@@ -26,15 +87,15 @@ def counter_extended(clk, ce, reset, dout, debug):
 		if counter == 14:
 			x.next = d + 1
 			y.next = 2
-		elif counter == 118:
-			x.next = d - 1
-			y.next = 1
-		elif counter == 22:
+		elif counter >= 118:
+			x.next = (d - 1)
+			y.next = 4
+		elif counter < 22:
 			x.next = 2
 			y.next = 0
 		else:
 			if ce:
-				x.next = 0
+				x.next = 8
 				y.next = 3
 			else:
 				x.next = 1
@@ -71,7 +132,22 @@ def test_counter():
 	arst = True
 	UNIT = counter_extended
 	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 200)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
+
+
+def test_simple_cases():
+	arst = True
+	UNIT = simple_cases
+	run_conversion(UNIT, arst)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
+
+
+def test_simple_resize():
+	arst = True
+	UNIT = simple_resize_cases
+	run_conversion(UNIT, arst)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
+
 
 def test_lfsr():
 	UNIT = lfsr8_0

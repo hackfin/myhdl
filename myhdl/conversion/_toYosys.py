@@ -86,20 +86,49 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		a, b = node.left, node.right
 		self.visit(a)
 		self.visit(b)
-		l = a.syn.q.size()
-		# print("Add wire with name %s, size %d" % (name, l))
-		sm = SynthesisMapper(SM_WIRE)
-		sm.q = m.addSignal(None, l)
-		name = NEW_ID(__name__, node, "binop")
-		m.apply_binop(name, node.op, a.syn.q, b.syn.q, sm.q)
+
+		la, lb = a.syn.q.size(), b.syn.q.size()
+
+		l = la
+
+		if a.syn.isConst() and b.syn.isConst():
+			sm = SynthesisMapper(SM_WIRE)
+			self.dbg(node, BLUEBG, "BINOP CONST EXPR", "%s" % (node.op))
+			res = self.const_eval(node)
+			sm.q = ConstSignal(res, res.bit_length())
+			del a.syn, b.syn
+
+		else:
+
+			if la < lb and isinstance(node.left.obj, _Signal):
+				a.syn.q.extend_u0(lb, a.syn.is_signed)
+				l = lb
+			elif la > lb and isinstance(node.right.obj, _Signal):
+				b.syn.q.extend_u0(lb, b.syn.is_signed)
+
+			# print("Add wire with name %s, size %d" % (name, l))
+			sm = SynthesisMapper(SM_WIRE)
+			sm.q = m.addSignal(None, l)
+			name = NEW_ID(__name__, node, "binop")
+			m.apply_binop(name, node.op, a.syn.q, b.syn.q, sm.q)
+
 		node.syn = sm
 
 #	def visit_BoolOp(self, node):
 #		pass
 #
-#	def visit_UnaryOp(self, node):
-#		print(_n())
-
+	def visit_UnaryOp(self, node):
+		m = self.context
+		a = node.operand
+		self.dbg(node, BLUEBG, "UNARY_OP", "%s" % (node.op))
+		self.visit(a)
+		l = a.syn.q.size()
+		sm = SynthesisMapper(SM_WIRE)
+		sm.q = m.addSignal(None, l)
+		name = NEW_ID(__name__, node, "unop")
+		m.apply_unop(name, node.op, a.syn.q, sm.q)
+		node.syn = sm
+		
 	def visit_Attribute(self, node):
 		if isinstance(node.ctx, ast.Store):
 			self.setAttr(node)
