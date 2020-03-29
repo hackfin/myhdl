@@ -22,6 +22,6 @@ RUN echo "pyosys ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/pyosys-nopw
 
 USER pyosys
 RUN install -d /home/pyosys/scripts/recipes
-RUN wget https://raw.githubusercontent.com/hackfin/myhdl/upgrade/scripts/recipes/myhdl.mk -O /home/pyosys/scripts/recipes/myhdl.mk
+RUN wget https://raw.githubusercontent.com/hackfin/myhdl/to_yosys/scripts/recipes/myhdl.mk -O /home/pyosys/scripts/recipes/myhdl.mk
 WORKDIR /home/pyosys
 
