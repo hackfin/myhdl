@@ -10,12 +10,17 @@ xfail = pytest.mark.xfail
 
 all_sims = list(_simulators)
 
+# Possible synthesis backends:
+all_syns = [ 'yosys-iverilog' ]
+
 if sys.version_info[0] > 2:
     collect_ignore = ['conversion/toVerilog/test_not_supported_py2.py']
 
 def pytest_addoption(parser):
     parser.addoption("--sim", action="store", choices=all_sims,
                      help="HDL Simulator")
+    parser.addoption("--syn", action="store", choices=all_syns,
+                     help="XHDL backend for formal verification")
 
 
 def pytest_configure(config):

@@ -752,6 +752,7 @@ class _AnalyzeVisitor(ast.NodeVisitor, _ConversionMixin):
         choices = set()
         choices.add(item1)
 
+
         for test, suite in node.tests[1:]:
             if not hasattr(test, 'case'):
                 return

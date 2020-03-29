@@ -1,18 +1,24 @@
-.PHONY: all general toVerilog2 toVHDL toVerilog
+.PHONY: all general toVerilog2 toVHDL toVerilog toYosys
 
-all: general toVerilog2 toVHDL toVerilog
+PYTEST ?= py.test
+PYTEST3 ?= py.test-3
+
+all: general toVerilog2 toVHDL toVerilog toYosys
 
 general:
-	cd general; py.test --sim ghdl; py.test --sim iverilog 
+	cd $@; $(PYTEST) --sim ghdl; $(PYTEST) --sim iverilog 
 
 toVerilog2:
-	cd toVerilog2; py.test --sim iverilog 
+	cd $@; $(PYTEST) --sim iverilog 
 
 toVHDL:
-	cd toVHDL; py.test --sim ghdl 
+	cd $@; $(PYTEST) --sim ghdl 
+
+toYosys:
+	cd $@; $(PYTEST3)
 
 toVerilog: 
-	cd toVerilog; py.test --sim iverilog 
+	cd $@; $(PYTEST) --sim iverilog 
 
 gitclean:
 	git clean -dfx    

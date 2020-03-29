@@ -283,7 +283,7 @@ class _Block(object):
         self.argdict = intf.argdict
 
     # Public methods
-    # The puropse now is to define the API, optimizations later
+    # The purpose now is to define the API, optimizations later
 
     def  _clear(self):
         """ Clear a number of 'global' attributes.
@@ -303,7 +303,7 @@ class _Block(object):
         self._clear()
         return myhdl.conversion.analyze(self)
 
-    def convert(self, hdl='Verilog', **kwargs):
+    def convert(self, hdl='Verilog', context = None, **kwargs):
         """Converts this BlockInstance to another HDL
 
         Args:
@@ -325,6 +325,12 @@ class _Block(object):
             converter = myhdl.conversion._toVHDL.toVHDL
         elif hdl.lower() == 'verilog':
             converter = myhdl.conversion._toVerilog.toVerilog
+# FIXME: Change plugin concept, we may want to have this optional
+# and not require a yosys installation
+        elif hdl.lower() == 'yosys_module':
+            converter = myhdl.conversion._toYosys.toYosysModule
+            print("Setting context", context)
+            setattr(converter, 'design', context)
         else:
             raise BlockInstanceError('unknown hdl %s' % hdl)
 
@@ -353,7 +359,9 @@ class _Block(object):
             sim = self
             #if self._config_sim['trace']:
             #    sim = myhdl.traceSignals(self)
+            # This messing with globals is ugly.
             self.sim = myhdl._Simulation.Simulation(sim)
+            self.sim. timescale = myhdl.traceSignals.timescale
         self.sim.run(duration, quiet)
 
     def quit_sim(self):

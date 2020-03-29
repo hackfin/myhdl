@@ -1,4 +1,4 @@
-MYHDL_UPSTREAM = $(HOME)/src/myhdl/myhdl-upgrade
+MYHDL_UPSTREAM = $(HOME)/src/myhdl/myhdl-yosys
 
 all: install
 
@@ -8,7 +8,7 @@ $(MYHDL_UPSTREAM):
 	git clone https://github.com/hackfin/myhdl $(notdir $@)
 
 install: $(MYHDL_UPSTREAM)
-	cd $< && python setup.py install --user
+	cd $< && python3 setup.py install --user
 
 TEST_LIST_TOVHDL = \
 	test_slices.py \
@@ -68,8 +68,7 @@ TEST_LIST = $(TEST_LIST_GENERAL:%=general/%) $(TEST_LIST_TOVHDL:%=toVHDL/%)
 
 # Run those tests that should pass by default:
 test:
-	cd $(MYHDL_UPSTREAM)/myhdl/test/conversion && \
-		py.test --sim=ghdl $(TEST_LIST)
+	$(MAKE) -C $(MYHDL_UPSTREAM)/myhdl/test/conversion/toYosys
 
 fulltest:
 	# The general test will currently fail.
