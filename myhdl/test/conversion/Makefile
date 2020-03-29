@@ -1,6 +1,7 @@
 .PHONY: all general toVerilog2 toVHDL toVerilog toYosys
 
-PYTEST ?= py.test-3
+PYTEST ?= py.test
+PYTEST3 ?= py.test-3
 
 all: general toVerilog2 toVHDL toVerilog toYosys
 
@@ -14,7 +15,7 @@ toVHDL:
 	cd $@; $(PYTEST) --sim ghdl 
 
 toYosys:
-	cd $@; $(PYTEST) --sim iverilog 
+	cd $@; $(PYTEST3)
 
 toVerilog: 
 	cd $@; $(PYTEST) --sim iverilog 

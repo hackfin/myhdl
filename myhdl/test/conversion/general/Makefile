@@ -1,6 +1,6 @@
 all:  vlog vcom 
 
-PYTEST ?= py.test-3
+PYTEST ?= py.test
 
 ghdl:
 	$(PYTEST) --sim ghdl

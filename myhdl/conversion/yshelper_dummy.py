@@ -22,9 +22,7 @@ def lineno():
 
 class SynthesisMapper:
 	def __init__(self, el_type):
-		self.el_type = el_type
-		self.q = None
-		self.is_signed = False
+		pass
 
 def NEW_ID(name, node, ext):
 	return None
@@ -36,7 +34,6 @@ def Signal(x):
 	return None
 
 def ConstSignal(x, l):
-	c = Const(x, l)
 	return None
 
 def SigBit(x):
