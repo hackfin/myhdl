@@ -5,9 +5,10 @@ all: install
 $(MYHDL_UPSTREAM):
 	[ -e $(dir $@) ] || install -d $(dir $@)
 	cd $(dir $@) && \
-	git clone https://github.com/hackfin/myhdl $(notdir $@)
+	git clone -b to_yosys https://github.com/hackfin/myhdl $(notdir $@)
 
 install: $(MYHDL_UPSTREAM)
+	$(MAKE) -C $(MYHDL_UPSTREAM)/cosimulation/icarus all
 	cd $< && python3 setup.py install --user
 
 TEST_LIST_TOVHDL = \

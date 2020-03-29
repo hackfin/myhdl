@@ -1,7 +1,10 @@
 MyHDL 0.11 
 ==========
 
-This is an UNSTABLE development branch for testing only.
+This is an UNSTABLE development branch for experimenting with direct synthesis via yosys. Yet quit undocumented and work in progress, see `test/conversion/toYosys/test_*.py` for examples.
+
+Based on 'upgrade' branch:
+
 There are attempts to fix a few flaws and use an alternate testing approach, plus a few features (work in progress):
 
 
@@ -91,11 +94,11 @@ and following the instructions in the ``README.txt`` file.
 Docker support
 ---------------
 
-This experimental branch supports continuous integration with Docker in some way (TBD).
+This experimental branch supports continuous integration with Docker.
 If you want to use a pre-built docker container, you can just run
 
 ```
-docker run -it hackfin/myhdl_testing
+docker run -it hackfin/myhdl_testing:yosys
 ```
 
 on your local Linux system with docker service running, or using the Windows environment (see https://docs.docker.com/docker-for-windows/). You can also run it in the browser, thanks to the docker playground (https://labs.play-with-docker.com).
