@@ -9,7 +9,10 @@ from myhdl import intbv
 from myhdl._enum import EnumType, EnumItemType
 
 from myhdl._Signal import _Signal
+from myhdl._block import _Block
 from myhdl import intbv, EnumType, EnumItemType
+
+from myhdl.conversion._misc import (_get_argnames)
 
 from pyosys import libyosys as ys
 
@@ -26,6 +29,13 @@ OFF = "\033[0m"
 # Visitor states:
 S_NEUTRAL, S_COLLECT, S_MUX , S_TIE_DEFAULTS = range(4)
 
+
+class DebugOutput:
+	def dbg(self, node, kind, msg = "DBG", details = "MARK"):
+		lineno = self.getLineNo(node)
+		lineno += self.tree.lineoffset
+		if kind == REDBG:
+			print("%s: %s:%d %s" % (kind + msg + OFF, self.tree.sourcefile, lineno, details))
 
 class Synth_Nosupp(Exception):
 	def __init__(self, value):
@@ -48,6 +58,7 @@ class SynthesisMapper:
 		self.el_type = el_type
 		self.q = None
 		self.is_signed = False
+		self.carry = False # Carry flag
 
 	def isConst(self):
 		return self.el_type == SM_NUM
@@ -59,9 +70,12 @@ def OBJ_ID(name, src, ext):
 	return ys.IdString("$" + name + "\\" + src + "\\" + ext)
 
 def Signal(x):
-	return ys.SigSpec(x.get())
+	if isinstance(x, Wire) or isinstance(x, Const):
+		return ys.SigSpec(x.get())
+	else:
+		return ys.SigSpec(x)
 
-def ConstSignal(x, l):
+def ConstSignal(x, l = None):
 	c = Const(x, l)
 	return ys.SigSpec(c.get())
 
@@ -86,19 +100,30 @@ class Design:
 		m = self.design.addModule(ID(name))
 		return Module(m)
 
-	def display_rtl(self, pdf = False):
+	def set_top_module(self, top):
+		key = create_key(top.obj)
+		ys.run_pass("hierarchy -top $%s" % key, self.design)
+
+	def display_rtl(self, selection = "", pdf = False):
 		"Display first stage RTL"
 		design = self.design
 		print("Display...")
-		ys.run_pass("ls", design)
+		# ys.run_pass("ls", design)
 		if pdf:
 			fmt = "-format pdf"
 		else:
 			fmt = ""
-		ys.run_pass("show %s -prefix %s" % (fmt, self.name), design)
+		ys.run_pass("show %s -prefix %s $%s" % (fmt, self.name, selection), design)
+
+	def display_dir(self):
+		ys.run_pass("ls", self.design)
+
+	def write_ilang(self, name = "top"):
+		ys.run_pass("write_ilang %s_mapped.il" % name, self.design)
 
 	def write_verilog(self, name, rename_default = False):
 		"Write verilog"
+		ys.run_pass("hierarchy -check")
 		if name == None:
 			name = "uut"
 		design = self.design
@@ -155,44 +180,86 @@ def get_size(s):
 class Module:
 	"Yosys module wrapper"
 
+	EX_SAME, EX_CARRY, EX_TWICE = range(3)
+
 	_opmap = {
-		ast.Add      : ys.Module.addAdd,
-		ast.Sub      : ys.Module.addSub,
-		ast.Mult     : ys.Module.addMul,
-		ast.Div      : ys.Module.addDiv,
-		ast.Mod      : ys.Module.addMod,
-		ast.Pow      : ys.Module.addPow,
-		ast.LShift   : ys.Module.addShl,
-		ast.RShift   : ys.Module.addShr,
-		ast.BitOr    : ys.Module.addOr,
-		ast.BitAnd   : ys.Module.addAnd,
-		ast.BitXor   : ys.Module.addXor,
-		ast.FloorDiv : ys.Module.addDiv,
-		ast.Invert   : ys.Module.addNot,
-		ast.Not      : ys.Module.addNot,
-		ast.UAdd     : ys.Module.addAdd,
-		ast.USub     : ys.Module.addSub,
-		ast.Eq       : ys.Module.addEq,
-		ast.Gt       : ys.Module.addGt,
-		ast.GtE      : ys.Module.addGe,
-		ast.Lt       : ys.Module.addLt,
-		ast.LtE      : ys.Module.addLe,
-		ast.NotEq    : ys.Module.addNe,
-		ast.And      : ys.Module.addAnd,
-		ast.Or       : ys.Module.addOr
+		ast.Add		 : ( ys.Module.addAdd,	 EX_CARRY ),
+		ast.Sub		 : ( ys.Module.addSub,	 EX_SAME ),
+		ast.Mult	 : ( ys.Module.addMul,	 EX_TWICE ),
+		ast.Div		 : ( ys.Module.addDiv,	 EX_SAME ),
+		ast.Mod		 : ( ys.Module.addMod,	 EX_SAME ),
+		ast.Pow		 : ( ys.Module.addPow,	 EX_SAME ),
+		ast.LShift	 : ( ys.Module.addShl,	 EX_SAME ),
+		ast.RShift	 : ( ys.Module.addShr,	 EX_SAME ),
+		ast.BitOr	 : ( ys.Module.addOr,	 EX_SAME ),
+		ast.BitAnd	 : ( ys.Module.addAnd,	 EX_SAME ),
+		ast.BitXor	 : ( ys.Module.addXor,	 EX_SAME ),
+		ast.FloorDiv : ( ys.Module.addDiv,	 EX_SAME ),
+		ast.Invert	 : ( ys.Module.addNot,	 EX_SAME ),
+		ast.Not		 : ( ys.Module.addNot,	 EX_SAME ),
+		ast.UAdd	 : ( ys.Module.addAdd,	 EX_SAME ),
+		ast.USub	 : ( ys.Module.addSub,	 EX_SAME ),
+		ast.Eq		 : ( ys.Module.addEq,	 EX_SAME ),
+		ast.Gt		 : ( ys.Module.addGt,	 EX_SAME ),
+		ast.GtE		 : ( ys.Module.addGe,	 EX_SAME ),
+		ast.Lt		 : ( ys.Module.addLt,	 EX_SAME ),
+		ast.LtE		 : ( ys.Module.addLe,	 EX_SAME ),
+		ast.NotEq	 : ( ys.Module.addNe,	 EX_SAME ),
+		ast.And		 : ( ys.Module.addAnd,	 EX_SAME ),
+		ast.Or		 : ( ys.Module.addOr,	 EX_SAME )
 	}
 
 	def __init__(self, m):
 		self.module = m
-		self.wires = {}
+		self.wires = {} # Local module wires
 		self.variables = {}
 		self.guard = {}
+		self.user = [] # Module users
 	
 	def __getattr__(self, name):
 		return getattr(self.module, name)
 
-	def apply_binop(self, name, op, a, b, q):
-		self._opmap[type(op)](self.module, name, a, b, q)
+	def apply_compare(self, node, a, b, l):
+		sm = SynthesisMapper(SM_WIRE)
+		sm.q = self.addSignal(None, l)
+		name = NEW_ID(__name__, node, "binop")
+		op = node.ops[0]
+		f = self._opmap[type(op)][0]
+		f(self.module, name, a.q, b.q, sm.q)
+
+		return sm
+
+	def apply_binop(self, node, a, b):
+
+		la, lb = a.q.size(), b.q.size()
+		op = node.op
+
+		l = la
+
+		if la < lb and isinstance(node.left.obj, _Signal):
+			a.q.extend_u0(lb, a.is_signed)
+			l = lb
+		elif la > lb and isinstance(node.right.obj, _Signal):
+			b.q.extend_u0(lb, b.is_signed)
+
+
+		f, ext = self._opmap[type(op)]
+
+		sm = SynthesisMapper(SM_WIRE)
+
+		if ext == self.EX_TWICE:
+			l *= 2
+		elif ext == self.EX_CARRY:
+			l += 1
+			sm.carry = True
+
+		# print("Add wire with name %s, size %d" % (name, l))
+		sm.q = self.addSignal(None, l)
+		name = NEW_ID(__name__, node, "binop")
+
+		f(self.module, name, a.q, b.q, sm.q)
+
+		return sm
 
 	def apply_unop(self, name, op, a, q):
 		self._opmap[type(op)](self.module, name, a, q)
@@ -218,33 +285,50 @@ class Module:
 		w = self.addWire(name, n, public)
 		return ys.SigSpec(w.get())
 
-	def collectWires(self, sigs, sigdict):
+	def collectWires(self, instance, args):
 		initvalues = { }
 		d = { }
-		print(sigs)
-		i = 0
-		for name, sig in sigdict.items():
-			l = len(sig)
-			w = self.addWire(name, l, True)
-			if sig._driven:
-				print("Wire OUT %s" % name)
-				w.get().port_output = True
+		blk = instance.obj
+		sigs = instance.sigdict
+
+		l = len(blk.args)
+		print(l)
+
+		for i, name in enumerate(args):
+			print("It ", i)
+			if name in sigs:
+				sig = sigs[name]
+				s = len(sig)
+				if isinstance(sig, _Signal):
+					w = self.addWire(name, s, True)
+					if sig._driven:
+						print("Wire OUT %s" % name)
+						w.get().port_output = True
+					else:
+						print("Wire IN %s" % name)
+						w.get().port_input = True
+					# FIXME: Works only for const values. When using a parametrized value,
+					# we need to make sure the cell gets the corresponding parameter
+					initvalues[name] = sig._init
+					d[name] = Signal(w)
+				else:
+					raise AssertionError("Unsupported wire")
+			elif i < l:
+				arg = blk.args[i]
+				if isinstance(arg, int):
+					print("Const Wire %s" % name)
+					d[name] = ConstSignal(arg, arg.bit_length())
+				else:
+					raise AssertionError("Unsupported const")
 			else:
-				print("Wire IN %s" % name)
-				w.get().port_input = True
+				print("SKIP default arg %s" % name)
 
-			i += 1
-
-			initvalues[name] = sig._init
-			d[name] = Signal(w)
-
-		for s in sigs:
-			n = s._name
-			if not n in sigdict:
+		for n, s in sigs.items():
+			if not n in blk.argdict:
 				if isinstance(s._val, EnumItemType):
 					d[n] = self.addSignal(n, s._nrbits)
 				else:
-					print("Internal Wire %s type %s" % (n, repr(s._type)))
+					print("Internal Wire %s type %s, init: %d" % (n, repr(s._type), s._init))
 					l = get_size(s)
 					d[n] = self.addSignal(n, l)
 
@@ -283,29 +367,106 @@ def mux_input(x, templ):
 
 	return x
 
-class VisitorHelper:
+class Instance:
+	__slots__ = ['level', 'obj', 'subs', 'sigdict', 'memdict', 'name', 'genlist', 'instances', 'cell']
+
+	def __init__(self, level, obj, subs, sigdict, memdict):
+		self.level = level
+		self.obj = obj
+		self.subs = subs
+		self.sigdict = sigdict
+		self.memdict = memdict
+		self.name = None
+		self.cell = False
+
+	def __repr__(self):
+		return self.name
+
+def create_key(inst):
+	"Create a unique key for a specific instance"
+	a = inst.func.__name__
+	for i in inst.args:
+		if isinstance(i, _Signal) or isinstance(i, list) or isinstance(i, tuple):
+			a += "_%d" % len(i)
+		elif isinstance(i, int):
+			a += "_c%d" % i
+		else:
+			a += "_" + repr(i)
+
+	return a
+
+class Hierarchy:
+	"""Hierarchy class for modular transfer languages which don't require flattening
+the entire design. However, they need to maintain a parameter dictionary for
+differing instances of the same architecture"""
+
+
+	def _getHierarchyHelper(self, level, modinst, hierarchy):
+		if isinstance(modinst, _Block):
+			impl = modinst.func.__name__
+			# Create some 'hash' according to interface specs
+			key = create_key(modinst)
+
+			subs = [(s.name, s) for s in modinst.subs]
+			inst = Instance(level, modinst, subs, modinst.sigdict, modinst.memdict)
+			hierarchy.append(inst)
+
+			if key in self.users:
+				self.users[key].append(inst)
+				inst.cell = True
+			else:
+				self.users[key] = [ inst ]
+
+			for inst in modinst.subs:
+				self._getHierarchyHelper(level + 1, inst, hierarchy)
+
+	def __init__(self, name, modinst):
+		self.top = modinst
+		self.hierarchy = hierarchy = []
+		self.absnames = absnames = {}
+		self.users = {}
+		self._getHierarchyHelper(1, modinst, hierarchy)
+		# compatibility with _extractHierarchy
+		# walk the hierarchy to define relative and absolute names
+		names = {}
+		top_inst = hierarchy[0]
+		obj, subs = top_inst.obj, top_inst.subs
+
+		names[id(obj)] = name
+		absnames[id(obj)] = name
+		for inst in hierarchy:
+			obj, subs = inst.obj, inst.subs
+			inst.name = names[id(obj)]
+			tn = absnames[id(obj)]
+			for sn, so in subs:
+				names[id(so)] = sn
+				absnames[id(so)] = "%s_%s" % (tn, sn)
+
+
+
+class VisitorHelper(DebugOutput):
 	"""Visitor helper class for yosys interfacing
 Used for separation of common functionality of visitor classes"""
 
 	# Note: Python3 specific
 	_opmap_reduce_const = {
-		ast.Add      : int.__add__,
-		ast.Sub      : int.__sub__,
-		ast.Mult     : int.__mul__,
-		ast.Div      : int.__floordiv__,
-		ast.Mod      : int.__mod__,
-		ast.Pow      : int.__mod__,
-		ast.LShift   : int.__lshift__,
-		ast.RShift   : int.__rshift__,
-		ast.BitOr    : int.__or__,
-		ast.BitAnd   : int.__and__,
-		ast.BitXor   : int.__xor__,
+		ast.Add		 : int.__add__,
+		ast.Sub		 : int.__sub__,
+		ast.Mult	 : int.__mul__,
+		ast.Div		 : int.__floordiv__,
+		ast.Mod		 : int.__mod__,
+		ast.Pow		 : int.__mod__,
+		ast.LShift	 : int.__lshift__,
+		ast.RShift	 : int.__rshift__,
+		ast.BitOr	 : int.__or__,
+		ast.BitAnd	 : int.__and__,
+		ast.BitXor	 : int.__xor__,
 		ast.FloorDiv : int.__floordiv__,
-		ast.Invert   : int.__mod__,
-		ast.UAdd     : int.__add__,
-		ast.USub     : int.__sub__,
-		ast.And      : int.__and__,
-		ast.Or       : int.__or__,
+		ast.Invert	 : int.__mod__,
+		ast.UAdd	 : int.__add__,
+		ast.USub	 : int.__sub__,
+		ast.And		 : int.__and__,
+		ast.Or		 : int.__or__,
 	}
 
 	def const_eval(self, node):
@@ -320,11 +481,6 @@ Used for separation of common functionality of visitor classes"""
 		n = self.cur_module + "::" + type(node).__name__
 		src = "%s:%d" % (self.tree.sourcefile, node.lineno + self.tree.lineoffset)
 		return OBJ_ID(n, src, ext)
-
-	def dbg(self, node, kind, msg = "DBG", details = "MARK"):
-		lineno = self.getLineNo(node)
-		lineno += self.tree.lineoffset
-		print("%s: %s:%d %s" % (kind + msg + OFF, self.tree.sourcefile, lineno, details))
 
 	def setAttr(self, node):
 		if node.attr != 'next':
@@ -349,7 +505,7 @@ Used for separation of common functionality of visitor classes"""
 		else:
 			raise AssertionError("object not found")
 		if isinstance(obj, _Signal):
-			self.dbg(t, VIOBG, "getAttr ",  "signal " + repr(node))
+			self.dbg(t, VIOBG, "getAttr ",	"signal " + repr(node))
 			if node.attr == 'next':
 				sig = self.tree.symdict[node.value.id]
 				self.SigAss = obj._name
@@ -402,6 +558,10 @@ Used for separation of common functionality of visitor classes"""
 		sm.q = sig.extract(node.slice.value.n, 1)
 		node.syn = sm
 
+	def findSymbol(self, node):
+		identifier = node.obj._name
+		self.dbg(node, REDBG, "SYM_LOOKUP",  identifier)
+
 	def tie_defaults(self, node):
 		"Tie undefined 'other' inputs to defaults in synchronous processes"
 		prev = self.state
@@ -442,7 +602,7 @@ Used for separation of common functionality of visitor classes"""
 				target = wires[sigid]
 				l = target.size()
 				if sigid in casemap:
-					self.dbg(t, REDBG, "DRV_OBSOLETE",  "ineffective previous assignment to '%s'" % sigid)
+					self.dbg(t, REDBG, "DRV_OBSOLETE",	"ineffective previous assignment to '%s'" % sigid)
 				b = t.value
 				mux_b = mux_input(b, target)
 				casemap[sigid] = [ mux_b ]
@@ -472,7 +632,7 @@ Used for separation of common functionality of visitor classes"""
 
 		for i, test in enumerate(node.tests):
 			t = test[0]
-			self.dbg(t, GREEN, "CASE[%d]" % i,  "")
+			self.dbg(t, GREEN, "CASE[%d]" % i,	"")
 			cc.append(t.syn.q)
 			casemap = {}
 			self.handle_mux_statement(test[1], casemap)
@@ -480,7 +640,7 @@ Used for separation of common functionality of visitor classes"""
 			self.dbg(test, GREEN, "\n-- CASEMAP PMUX --", "parallel multiplexer map output:")
 
 			for n, item in casemap.items():
-				print("   %s ===> %s" % (n, repr(i)))
+				# print("   %s ===> %s" % (n, repr(i)))
 				target = m.wires[n]
 
 				if not n in muxmap:
@@ -530,11 +690,11 @@ Used for separation of common functionality of visitor classes"""
 			m.addPmux(name, a, varray, cc, y)
 			sm.drivers[wn] = [ y, None ]
 
-		self.dbg(node, GREEN, "\n\n-- PMUXMAP --", "multiplexer map output:")
-		for n, i in muxmap.items():
-			print("   %s ===> %s" % (n, repr(i)))
-
-		self.dbg(node, GREEN, "-- PMUXMAP END --", "\n\n")
+#		self.dbg(node, GREEN, "\n\n-- PMUXMAP --", "multiplexer map output:")
+#		for n, i in muxmap.items():
+#			print("   %s ===> %s" % (n, repr(i)))
+#
+#		self.dbg(node, GREEN, "-- PMUXMAP END --", "\n\n")
 			
 		node.syn = sm
 
@@ -563,7 +723,7 @@ Used for separation of common functionality of visitor classes"""
 
 			self.dbg(test, GREEN, "\n-- CASEMAP --", "multiplexer map output:")
 			for n, i in casemap.items():
-				print("   %s ===> %s" % (n, repr(i)))
+				# print("   %s ===> %s" % (n, repr(i)))
 
 				target = m.wires[n]
 				l = target.size()
@@ -571,7 +731,7 @@ Used for separation of common functionality of visitor classes"""
 
 				mux_b = i[0]
 				name = self.genid(test, n)
-				# self.dbg(test, BLUEBG, "ADD_SIGNAL",  "%s" % name)
+				# self.dbg(test, BLUEBG, "ADD_SIGNAL",	"%s" % name)
 				other = m.addSignal(name, l)
 
 				if n in muxmap:
@@ -599,7 +759,7 @@ Used for separation of common functionality of visitor classes"""
 			self.dbg(node, REDBG, "\n\n-- ELSE CASE --", "multiplexer map output:")
 
 			for n, i in elsemap.items():
-				print("   %s ===> %s" % (n, repr(i)))
+				# print("   %s ===> %s" % (n, repr(i)))
 				target = m.wires[n]
 
 				if len(i) == 2:
@@ -620,8 +780,8 @@ Used for separation of common functionality of visitor classes"""
 					self.dbg(node, REDBG, "NO DEFAULT", " No default for %s" % n)
 
 		self.dbg(node, GREEN, "\n\n-- MUXMAP --", "multiplexer map output:")
-		for n, i in muxmap.items():
-			print("   %s ===> %s" % (n, repr(i)))
+#		for n, i in muxmap.items():
+#			print("   %s ===> %s" % (n, repr(i)))
 
 		self.dbg(node, GREEN, "-- MUXMAP END --", "\n\n")
 

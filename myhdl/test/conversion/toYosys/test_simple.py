@@ -16,17 +16,51 @@ def up_counter(clk, ce, reset, counter):
 	return instances()
 
 @block
+def simple_arith(clk, ce, reset, dout, debug):
+	counter = Signal(modbv(0)[8:])
+
+	case = Signal(modbv()[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_comb
+	def modulo():
+		case.next = counter % 8
+
+	@always_comb
+	def select():
+
+		if counter > 80:
+			if case == 0:
+				dout.next = counter % 5
+			elif case == 1:
+				dout.next = counter[4:] * 2
+			elif case == 2:
+				dout.next = counter // 2
+			else:
+				dout.next = counter - 1
+
+		else:
+			dout.next = 0
+
+
+	return instances()
+
+@block
 def simple_cases(clk, ce, reset, dout, debug):
 	counter = Signal(modbv(0)[8:])
 
 	ctr = up_counter(clk, ce, reset, counter)
+
 	
 	@always_comb
 	def select():
 		debug.next = counter[4]
 
 		if counter == 14:
-			dout.next = (counter & ~0xf0) | 16
+			dout.next = (counter & 0xf0) ^ 16 + 1
+		elif counter == 15:
+			dout.next = 18 // 3 # Integer division
 		elif counter >= 25:
 			dout.next = counter[3:] | 8
 		elif counter == 26:
@@ -131,6 +165,12 @@ def lfsr8_0(clk, ce, reset, dout, debug):
 def test_counter():
 	arst = True
 	UNIT = counter_extended
+	run_conversion(UNIT, arst)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
+
+def test_simple_arith():
+	arst = False
+	UNIT = simple_arith
 	run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
 

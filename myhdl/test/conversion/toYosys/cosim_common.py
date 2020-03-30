@@ -100,7 +100,7 @@ def run_conversion(ent, async_reset = False, wrapper = None, **kwargs):
 
 	# a.convert("verilog")
 	a.convert("yosys_module", design, name=name, trace=True)
-	design.display_rtl()
+	# design.display_rtl()
 	design.write_verilog(name, True)
 
 def run_tb(tb, cycles = 200000):
