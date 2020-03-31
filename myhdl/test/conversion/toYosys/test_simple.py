@@ -3,6 +3,8 @@ from myhdl import *
 
 from .cosim_common import *
 
+from .lfsr8 import lfsr8
+
 @block
 def up_counter(clk, ce, reset, counter):
 
@@ -14,6 +16,23 @@ def up_counter(clk, ce, reset, counter):
 			counter.next = counter
 
 	return instances()
+
+@block
+def simple_expr(clk, ce, reset, dout, debug):
+	counter = Signal(modbv(0)[8:])
+	d = Signal(intbv(3)[2:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_comb
+	def assign():
+		if counter % 4 == 0:
+			dout.next = 1 | 4 | 2
+		else:
+			dout.next = 0
+
+	return instances()
+
 
 @block
 def simple_arith(clk, ce, reset, dout, debug):
@@ -42,7 +61,6 @@ def simple_arith(clk, ce, reset, dout, debug):
 
 		else:
 			dout.next = 0
-
 
 	return instances()
 
@@ -161,12 +179,34 @@ def lfsr8_0(clk, ce, reset, dout, debug):
 
 	return instances()
 
+@block
+def lfsr8_1(clk, ce, reset, dout, debug):
+	"""LFSR with all states"""
+
+	a, b = [ Signal(modbv()[8:]) for i in range(2) ]
+
+	inst_lfsr = lfsr8(clk, ce, reset, 0, a)
+
+	@always_comb
+	def assign():
+		dout.next = a
+
+	return instances()
+
 
 def test_counter():
 	arst = True
 	UNIT = counter_extended
 	run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
+
+
+def test_simple_expr():
+	arst = False
+	UNIT = simple_expr
+	run_conversion(UNIT, arst)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 2000)
+
 
 def test_simple_arith():
 	arst = False
@@ -188,12 +228,11 @@ def test_simple_resize():
 	run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
 
-
 def test_lfsr():
-	UNIT = lfsr8_0
+	UNIT = lfsr8_1
 	arst = False
 	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 200)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 2000)
 
 if __name__ == '__main__':
 	test_unit()

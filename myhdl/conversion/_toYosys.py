@@ -157,10 +157,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		elif isinstance(lhs.obj, _Signal):
 			self.dbg(node, BLUEBG, "ASSIGN", "assign to type %s" % (type(lhs.obj)))
 
-			try:
-				dst = self.context.wires[lhs.obj._name]
-			except KeyError:
-				dst = self.findSymbol(lhs)
+			dst = self.findSignal(lhs)
 
 			# Size handling and sign extension:
 			if dst.size() > src.size():
@@ -225,8 +222,6 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		b = node.comparators[0]
 		l = a.syn.q.size()
 		if l > 1 or isinstance(b.value, ast.Name):
-			sm = SynthesisMapper(SM_BOOL)
-			q = self.context.addSignal(name, 1)
 			# print("apply_binop() name %s" % (name))
 			sm = self.context.apply_compare(node, a.syn, b.syn, l)
 		else:

@@ -9,7 +9,7 @@ from myhdl import intbv
 from myhdl._enum import EnumType, EnumItemType
 
 from myhdl._Signal import _Signal
-from myhdl._block import _Block
+from myhdl._block import _Block, block
 from myhdl import intbv, EnumType, EnumItemType
 
 from myhdl.conversion._misc import (_get_argnames)
@@ -34,8 +34,8 @@ class DebugOutput:
 	def dbg(self, node, kind, msg = "DBG", details = "MARK"):
 		lineno = self.getLineNo(node)
 		lineno += self.tree.lineoffset
-		if kind == REDBG:
-			print("%s: %s:%d %s" % (kind + msg + OFF, self.tree.sourcefile, lineno, details))
+		# if kind == REDBG:
+		print("%s: %s:%d %s" % (kind + msg + OFF, self.tree.sourcefile, lineno, details))
 
 class Synth_Nosupp(Exception):
 	def __init__(self, value):
@@ -148,7 +148,10 @@ class Const:
 	def __init__(self, value, bits = None):
 		if type(value) == type(1):
 			if bits == None:
-				self.const = ys.Const(value, value.bit_length())
+				l = value.bit_length()
+				if l < 1:
+					l = 1
+				self.const = ys.Const(value, l)
 			else:
 				self.const = ys.Const(value, bits)
 		elif isinstance(value, intbv):
@@ -180,7 +183,7 @@ def get_size(s):
 class Module:
 	"Yosys module wrapper"
 
-	EX_SAME, EX_CARRY, EX_TWICE = range(3)
+	EX_COND, EX_SAME, EX_CARRY, EX_TWICE = range(4)
 
 	_opmap = {
 		ast.Add		 : ( ys.Module.addAdd,	 EX_CARRY ),
@@ -199,12 +202,12 @@ class Module:
 		ast.Not		 : ( ys.Module.addNot,	 EX_SAME ),
 		ast.UAdd	 : ( ys.Module.addAdd,	 EX_SAME ),
 		ast.USub	 : ( ys.Module.addSub,	 EX_SAME ),
-		ast.Eq		 : ( ys.Module.addEq,	 EX_SAME ),
-		ast.Gt		 : ( ys.Module.addGt,	 EX_SAME ),
-		ast.GtE		 : ( ys.Module.addGe,	 EX_SAME ),
-		ast.Lt		 : ( ys.Module.addLt,	 EX_SAME ),
-		ast.LtE		 : ( ys.Module.addLe,	 EX_SAME ),
-		ast.NotEq	 : ( ys.Module.addNe,	 EX_SAME ),
+		ast.Eq		 : ( ys.Module.addEq,	 EX_COND ),
+		ast.Gt		 : ( ys.Module.addGt,	 EX_COND ),
+		ast.GtE		 : ( ys.Module.addGe,	 EX_COND ),
+		ast.Lt		 : ( ys.Module.addLt,	 EX_COND ),
+		ast.LtE		 : ( ys.Module.addLe,	 EX_COND ),
+		ast.NotEq	 : ( ys.Module.addNe,	 EX_COND ),
 		ast.And		 : ( ys.Module.addAnd,	 EX_SAME ),
 		ast.Or		 : ( ys.Module.addOr,	 EX_SAME )
 	}
@@ -213,6 +216,7 @@ class Module:
 		self.module = m
 		self.wires = {} # Local module wires
 		self.variables = {}
+		self.wiring = {}
 		self.guard = {}
 		self.user = [] # Module users
 	
@@ -220,13 +224,13 @@ class Module:
 		return getattr(self.module, name)
 
 	def apply_compare(self, node, a, b, l):
-		sm = SynthesisMapper(SM_WIRE)
-		sm.q = self.addSignal(None, l)
-		name = NEW_ID(__name__, node, "binop")
+		sm = SynthesisMapper(SM_BOOL)
+		sm.q = self.addSignal(None, 1)
+		name = NEW_ID(__name__, node, "cmp")
 		op = node.ops[0]
+
 		f = self._opmap[type(op)][0]
 		f(self.module, name, a.q, b.q, sm.q)
-
 		return sm
 
 	def apply_binop(self, node, a, b):
@@ -244,10 +248,14 @@ class Module:
 
 
 		f, ext = self._opmap[type(op)]
+		# print(op)
+		# z = input("HIT RETURN")
 
 		sm = SynthesisMapper(SM_WIRE)
 
-		if ext == self.EX_TWICE:
+		if ext == self.EX_COND:
+			l = 1
+		elif ext == self.EX_TWICE:
 			l *= 2
 		elif ext == self.EX_CARRY:
 			l += 1
@@ -301,12 +309,16 @@ class Module:
 				s = len(sig)
 				if isinstance(sig, _Signal):
 					w = self.addWire(name, s, True)
+					pname = sig._name
+					if name != pname:
+						self.wiring[pname] = name
 					if sig._driven:
-						print("Wire OUT %s" % name)
+						print("Wire OUT %s, parent: %s" % (name, pname))
 						w.get().port_output = True
 					else:
-						print("Wire IN %s" % name)
+						print("Wire IN %s, parent %s" % (name, pname))
 						w.get().port_input = True
+					
 					# FIXME: Works only for const values. When using a parametrized value,
 					# we need to make sure the cell gets the corresponding parameter
 					initvalues[name] = sig._init
@@ -318,8 +330,10 @@ class Module:
 				if isinstance(arg, int):
 					print("Const Wire %s" % name)
 					d[name] = ConstSignal(arg, arg.bit_length())
+				elif isinstance(arg, block):
+					print("SKIP block arg %s" % arg)
 				else:
-					raise AssertionError("Unsupported const")
+					raise Synth_Nosupp("Unsupported wire type %s, signal '%s' in %s" % (type(arg).__name__, name, instance.name))
 			else:
 				print("SKIP default arg %s" % name)
 
@@ -390,8 +404,10 @@ def create_key(inst):
 			a += "_%d" % len(i)
 		elif isinstance(i, int):
 			a += "_c%d" % i
+		elif isinstance(i, block):
+			a += '_%s_' % i.func.__name__
 		else:
-			a += "_" + repr(i)
+			raise TypeError("Unsupported entity argument type in %s" % inst.name)
 
 	return a
 
@@ -486,8 +502,6 @@ Used for separation of common functionality of visitor classes"""
 		if node.attr != 'next':
 			self.dbg(node, REDBG, "ERROR ",  "attr " + repr(node.attr))
 		assert node.attr == 'next'
-		if isinstance(node.value, ast.Name):
-			sig = self.tree.symdict[node.value.id]
 		self.visit(node.value)
 		node.obj = self.getObj(node.value)
 
@@ -507,7 +521,6 @@ Used for separation of common functionality of visitor classes"""
 		if isinstance(obj, _Signal):
 			self.dbg(t, VIOBG, "getAttr ",	"signal " + repr(node))
 			if node.attr == 'next':
-				sig = self.tree.symdict[node.value.id]
 				self.SigAss = obj._name
 				self.visit(node.value)
 			elif node.attr == 'posedge':
@@ -558,9 +571,14 @@ Used for separation of common functionality of visitor classes"""
 		sm.q = sig.extract(node.slice.value.n, 1)
 		node.syn = sm
 
-	def findSymbol(self, node):
+	def findSignal(self, node):
 		identifier = node.obj._name
-		self.dbg(node, REDBG, "SYM_LOOKUP",  identifier)
+		if identifier in self.context.wires:
+			elem = self.context.wires[identifier]
+		else:
+			elem = self.context.wires[self.context.wiring[identifier]]
+
+		return elem
 
 	def tie_defaults(self, node):
 		"Tie undefined 'other' inputs to defaults in synchronous processes"
@@ -640,7 +658,7 @@ Used for separation of common functionality of visitor classes"""
 			self.dbg(test, GREEN, "\n-- CASEMAP PMUX --", "parallel multiplexer map output:")
 
 			for n, item in casemap.items():
-				# print("   %s ===> %s" % (n, repr(i)))
+				print("   %s ===> %s" % (n, repr(i)))
 				target = m.wires[n]
 
 				if not n in muxmap:
@@ -689,7 +707,7 @@ Used for separation of common functionality of visitor classes"""
 
 			m.addPmux(name, a, varray, cc, y)
 			sm.drivers[wn] = [ y, None ]
-
+	
 #		self.dbg(node, GREEN, "\n\n-- PMUXMAP --", "multiplexer map output:")
 #		for n, i in muxmap.items():
 #			print("   %s ===> %s" % (n, repr(i)))
