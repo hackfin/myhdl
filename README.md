@@ -1,7 +1,8 @@
-MyHDL 0.11 
-==========
+MyHDL 0.11-yosys
+================
 
-This is an UNSTABLE development branch for experimenting with direct synthesis via yosys. Yet quit undocumented and work in progress, see `test/conversion/toYosys/test_*.py` for examples.
+This is an UNSTABLE development branch for experimenting with direct synthesis via yosys.
+Yet quite undocumented and work in progress, see `test/conversion/toYosys/test_*.py` for examples.
 
 Based on 'upgrade' branch:
 
@@ -16,8 +17,9 @@ The reason for this new approach is to keep complex legacy code from an enhanced
 This is following a rather strict verification procedure from another component that is using MyHDL.
 
 The primary goal is, to improve the VHDL conversion tests, then later see how this corresponds to Verilog support.
-Some basic tests are enabled in the continuous integration to verify a sane build environment. These currently use a different
-GHDL release than the travis CI setup from the master repository (https://github.com/myhdl/myhdl).
+Some basic tests are enabled in the continuous integration to verify a sane build environment.
+These currently use a different GHDL release than the travis CI setup from the master repository
+(https://github.com/myhdl/myhdl).
 
 See also 'Docker support' below.
 

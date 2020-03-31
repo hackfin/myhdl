@@ -104,16 +104,23 @@ class Design:
 		key = create_key(top.obj)
 		ys.run_pass("hierarchy -top $%s" % key, self.design)
 
-	def display_rtl(self, selection = "", pdf = False):
+	def top_module(self):
+		return Module(self.design.top_module())
+
+	def display_rtl(self, selection = "", fmt = None, full = False):
 		"Display first stage RTL"
 		design = self.design
 		print("Display...")
 		# ys.run_pass("ls", design)
-		if pdf:
-			fmt = "-format pdf"
+		#
+		sel = selection
+		if fmt:
+			fmt = "-format " + fmt
+			if full:
+				sel = "*"
 		else:
 			fmt = ""
-		ys.run_pass("show %s -prefix %s $%s" % (fmt, self.name, selection), design)
+		ys.run_pass("show %s -prefix %s %s" % (fmt, self.name, sel), design)
 
 	def display_dir(self):
 		ys.run_pass("ls", self.design)
@@ -303,11 +310,11 @@ class Module:
 		print(l)
 
 		for i, name in enumerate(args):
-			print("It ", i)
 			if name in sigs:
 				sig = sigs[name]
 				s = len(sig)
 				if isinstance(sig, _Signal):
+					print("SIGNAL", sig._init)
 					w = self.addWire(name, s, True)
 					pname = sig._name
 					if name != pname:
@@ -332,6 +339,13 @@ class Module:
 					d[name] = ConstSignal(arg, arg.bit_length())
 				elif isinstance(arg, block):
 					print("SKIP block arg %s" % arg)
+				elif isinstance(arg, intbv):
+					print("Const signal Wire IN %s, parent %s" % (name, pname))
+					w = self.addWire(name, s, True)
+					w.get().port_input = True
+					d[name] = Signal(w)
+				elif arg == None:
+					pass
 				else:
 					raise Synth_Nosupp("Unsupported wire type %s, signal '%s' in %s" % (type(arg).__name__, name, instance.name))
 			else:
@@ -402,12 +416,16 @@ def create_key(inst):
 	for i in inst.args:
 		if isinstance(i, _Signal) or isinstance(i, list) or isinstance(i, tuple):
 			a += "_%d" % len(i)
+		elif isinstance(i, intbv):
+			a += "_%d" % len(i)
 		elif isinstance(i, int):
 			a += "_c%d" % i
 		elif isinstance(i, block):
 			a += '_%s_' % i.func.__name__
+		elif i == None:
+			pass
 		else:
-			raise TypeError("Unsupported entity argument type in %s" % inst.name)
+			raise TypeError("Unsupported entity argument type %s in %s" % ( type(i).__name__, inst.name))
 
 	return a
 
@@ -487,9 +505,14 @@ Used for separation of common functionality of visitor classes"""
 
 	def const_eval(self, node):
 		if isinstance(node, ast.BinOp):
-			l, r = node.left.n, node.right.n
+			l = self.const_eval(node.left)
+			r = self.const_eval(node.right)
 			f = self._opmap_reduce_const[type(node.op)]
 			return f(l, r)
+		elif isinstance(node, ast.Num):
+			return node.n
+		elif isinstance(node, ast.Name):
+			return node.value
 		else:
 			raise AssertionError("Unsupported op")
 

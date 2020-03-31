@@ -73,7 +73,7 @@ def mapped_wrapper(uut, clk, ce, reset, mode, data_out, data_in):
 
 	return setupCosimulation(**locals())
 
-def run_conversion(ent, async_reset = False, wrapper = None, **kwargs):
+def run_conversion(ent, async_reset = False, wrapper = None, display = False, **kwargs):
 	from myhdl.conversion import yshelper
 	clk = Signal(bool())
 	debug = Signal(bool(0))
@@ -96,11 +96,20 @@ def run_conversion(ent, async_reset = False, wrapper = None, **kwargs):
 		a = ent(clk, ce, reset, dout, debug)
 		name = ent.func.__name__
 
-	design = yshelper.Design("test")
+	design = yshelper.Design(name)
 
 	# a.convert("verilog")
 	a.convert("yosys_module", design, name=name, trace=True)
-	# design.display_rtl()
+	top = design.top_module()
+	top_name = top.name.str()
+
+	if display:
+		if 'display_module' in kwargs:
+			mname = kwargs['display_module']
+		else:
+			mname = top_name
+		design.display_rtl(mname)
+
 	design.write_verilog(name, True)
 
 def run_tb(tb, cycles = 200000):

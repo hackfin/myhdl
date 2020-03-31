@@ -33,6 +33,44 @@ def simple_expr(clk, ce, reset, dout, debug):
 
 	return instances()
 
+@block
+def process_variables(clk, ce, reset, dout, debug):
+	counter = Signal(modbv(0)[8:])
+	d = Signal(intbv(3)[2:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_comb
+	def assign():
+		rmod = counter % 4
+		if rmod == 0:
+			dout.next = 1 | 4 | 2
+		else:
+			dout.next = 0
+
+	return instances()
+
+@block
+def module_variables(clk, ce, reset, dout, debug):
+	counter = Signal(modbv(0)[8:])
+	d = Signal(intbv(3)[2:])
+
+	a = 144
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_comb
+	def assign():
+		rmod = counter % 4
+		if rmod == 0:
+			dout.next = a | 4 | 2
+		else:
+			dout.next = 0
+
+	return instances()
+
+
+
 
 @block
 def simple_arith(clk, ce, reset, dout, debug):
@@ -207,6 +245,17 @@ def test_simple_expr():
 	run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 2000)
 
+def test_simple_variables():
+	arst = False
+	UNIT = process_variables
+	run_conversion(UNIT, arst)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 2000)
+
+def test_module_variables():
+	arst = False
+	UNIT = module_variables
+	run_conversion(UNIT, arst)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 2000)
 
 def test_simple_arith():
 	arst = False
