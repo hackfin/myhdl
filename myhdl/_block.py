@@ -168,11 +168,11 @@ class block(object):
                 bound_func, self.srcfile, self.srcline)
             self.bound_functions[bound_key] = function_wrapper
 
-            proposed_inst_name = owner.__name__ + '0'
+            proposed_inst_name = owner.__name__ + '_0_'
 
             n = 1
             while proposed_inst_name in _inst_name_set:
-                proposed_inst_name = owner.__name__ + str(n)
+                proposed_inst_name = owner.__name__ + "_" + str(n) + "_"
                 n += 1
 
             function_wrapper.name_prefix = proposed_inst_name
@@ -186,7 +186,7 @@ class block(object):
 
     def __call__(self, *args, **kwargs):
 
-        name = self.func.__name__ + str(self.calls)
+        name = self.func.__name__ + "_" + str(self.calls) + "_"
         self.calls += 1
 
         # See concerns above about uniqueifying

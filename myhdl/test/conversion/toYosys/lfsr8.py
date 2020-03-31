@@ -8,7 +8,7 @@ def lfsr8a(clk, ce, reset, rval, dout):
 
 	@always_seq(clk.posedge, reset)
 	def worker():
-		if enable == 1:
+		if ce == 1:
 			b = bool(not v[7])
 			b = bool(b ^ (v[6] ^ v[4]))
 			w = concat(v[7:], b)
@@ -89,5 +89,6 @@ if __name__ == "__main__":
 		clk = Signal(bool(0))
 		dout = Signal(intbv()[8:])
 
-		lfsr = lfsr8(clk, reset, 0, enable, dout)
+
+		lfsr = lfsr8(clk, enable, reset, 0, dout)
 		lfsr.convert("VHDL")

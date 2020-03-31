@@ -1,12 +1,13 @@
 import ast
 from myhdl._block import _Block
-from myhdl._getHierarchy import _getHierarchy
+# from myhdl._getHierarchy import _getHierarchy
 
 from types import GeneratorType
 from myhdl._instance import _Instantiator
 
-from myhdl._extractHierarchy import (_HierExtr, _isMem, _getMemInfo,
-									 _UserVhdlCode, _userCodeMap)
+from myhdl._always_comb import _AlwaysComb
+from myhdl._always_seq import _AlwaysSeq
+from myhdl._always import _Always
 
 from myhdl._Signal import _Signal, _WaiterList, _PosedgeWaiterList, _NegedgeWaiterList
 
@@ -15,8 +16,10 @@ from myhdl._compat import StringIO
 from myhdl.conversion._misc import (_error, _kind, _context,
 									_ConversionMixin, _Label, _genUniqueSuffix, _isConstant)
 
-from myhdl.conversion._analyze import (_analyzeSigs, _analyzeGens, _analyzeTopFunc,
+from myhdl.conversion._analyze import (_analyzeGens, _makeName,
 									   _Ram, _Rom, _enumTypeSet, _slice_constDict)
+
+from myhdl._ShadowSignal import _ShadowSignal, _SliceSignal, _TristateDriver
 
 from myhdl import intbv, EnumType, concat
 
@@ -31,7 +34,7 @@ import inspect
 # To write out testbench for post-map output:
 from myhdl.conversion._toVerilog import _writeTestBench
 
-_n  = lambda: "CALL \t" + inspect.stack()[1][3] + "()"
+_n	= lambda: "CALL \t" + inspect.stack()[1][3] + "()"
 
 from myhdl.conversion.annotate import _AnnotateTypesVisitor
 
@@ -44,24 +47,19 @@ def _flatten(*args):
 	arglist = []
 	for arg in args:
 		if isinstance(arg, _Block):
-			if arg.vhdl_code is not None:
-				arglist.append(arg.vhdl_code)
-				continue
-			else:
-				arg = arg.subs
-		if id(arg) in _userCodeMap['vhdl']:
-			arglist.append(_userCodeMap['vhdl'][id(arg)])
-		elif isinstance(arg, (list, tuple, set)):
+			print("Add %s" % type(arg).__name__)
+			arg = arg.subs
+		else:
+			print("Ignoring element type %s" % type(arg).__name__)
+
+		if isinstance(arg, (list, tuple, set)):
+			print("TUPLE", arg)
 			for item in arg:
 				arglist.extend(_flatten(item))
 		else:
 			arglist.append(arg)
+	print("RETURNING", arglist)
 	return arglist
-
-def _checkArgs(arglist):
-	for arg in arglist:
-		if not isinstance(arg, (GeneratorType, _Instantiator, _UserVhdlCode)):
-			raise ToVHDLError(_error.ArgType, arg)
 
 
 ANNOTATE = "\033[7;30m"
@@ -87,9 +85,6 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		self.visit(a)
 		self.visit(b)
 
-		la, lb = a.syn.q.size(), b.syn.q.size()
-
-		l = la
 
 		if a.syn.isConst() and b.syn.isConst():
 			sm = SynthesisMapper(SM_WIRE)
@@ -99,18 +94,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			del a.syn, b.syn
 
 		else:
-
-			if la < lb and isinstance(node.left.obj, _Signal):
-				a.syn.q.extend_u0(lb, a.syn.is_signed)
-				l = lb
-			elif la > lb and isinstance(node.right.obj, _Signal):
-				b.syn.q.extend_u0(lb, b.syn.is_signed)
-
-			# print("Add wire with name %s, size %d" % (name, l))
-			sm = SynthesisMapper(SM_WIRE)
-			sm.q = m.addSignal(None, l)
-			name = NEW_ID(__name__, node, "binop")
-			m.apply_binop(name, node.op, a.syn.q, b.syn.q, sm.q)
+			sm = m.apply_binop(node, a.syn, b.syn)
 
 		node.syn = sm
 
@@ -122,6 +106,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		a = node.operand
 		self.dbg(node, BLUEBG, "UNARY_OP", "%s" % (node.op))
 		self.visit(a)
+
 		l = a.syn.q.size()
 		sm = SynthesisMapper(SM_WIRE)
 		sm.q = m.addSignal(None, l)
@@ -170,15 +155,20 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			self.dbg(node, BLUEBG, "ASSIGN", "assign to variable %s" % (name))
 			dst = None
 		elif isinstance(lhs.obj, _Signal):
-			dst = self.context.wires[lhs.obj._name]
 			self.dbg(node, BLUEBG, "ASSIGN", "assign to type %s" % (type(lhs.obj)))
+
+			dst = self.findSignal(lhs)
 
 			# Size handling and sign extension:
 			if dst.size() > src.size():
 				self.dbg(node, REDBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
 				src.extend_u0(dst.size(), rhs.syn.is_signed)
 			elif dst.size() < src.size():
-				self.raiseError(node, "OVERFLOW const value: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
+				if rhs.syn.carry:
+					self.dbg(node, REDBG, "TRUNC", "Implicit carry truncate: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
+					src = src.extract(0, dst.size())
+				else:
+					self.raiseError(node, "OVERFLOW const value: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
 
 		else:
 			raise Synth_Nosupp("Can't handle this YET")
@@ -232,13 +222,8 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		b = node.comparators[0]
 		l = a.syn.q.size()
 		if l > 1 or isinstance(b.value, ast.Name):
-			sm = SynthesisMapper(SM_BOOL)
-			q = self.context.addSignal(name, 1)
-			op = node.ops[0]
-			name = NEW_ID(__name__, node, "binop2")
 			# print("apply_binop() name %s" % (name))
-			self.context.apply_binop(name, op, a.syn.q, b.syn.q, q)
-			sm.q = q
+			sm = self.context.apply_compare(node, a.syn, b.syn, l)
 		else:
 			node.defer = DEFER_MUX
 			sm = SynthesisMapper(SM_BOOL)
@@ -277,7 +262,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				if isinstance(stmt, ast.If):
 					self.visit(stmt)
 
-			self.dbg(node, REDBG, "TIE_DEFAULT", "VISIT")
+			self.dbg(node, BLUEBG, "TIE_DEFAULT", "VISIT")
 
 			for n, i in node.syn.drivers.items():
 				other = i[1]
@@ -388,7 +373,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				sm = SynthesisMapper(SM_VAR)
 				self.variables[node.id] = None
 				node.syn = sm
-				self.dbg(node, REDBG, "Init Variable", node.id)
+				self.dbg(node, GREEN, "Init Variable", node.id)
 		elif node.id in m.wires:
 			d = m.wires
 			sm = SynthesisMapper(SM_WIRE)
@@ -603,23 +588,122 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 
 			self.state = prev
 
+def _TYPE(x):
+	return type(x).__name__
+		
 
-def convert_rtl(hierarchy, func, tbname, design, write_tb, trace):
-	arglist = _flatten(hierarchy.top)
-	_checkArgs(arglist)
-	genlist = _analyzeGens(arglist, hierarchy.absnames)
-	siglist, memlist = _analyzeSigs(hierarchy.hierarchy, hdl='Verilog')
+def dump_hierarchy(hierarchy, func, outfile = "/tmp/hdump.txt"):
+	f = open(outfile, "w")
+	# import sys
+	# f = sys.stdout
+	l = 0
+	print("  Arguments:", file=f)
+	for argname, arg in func.argdict.items():
+		print("    '%s' : %030s(%s)" % (argname, _TYPE(arg), arg._type.__name__), file=f)
+
+	print("  Symbols:", file=f)
+	for argname, arg in func.symdict.items():
+		if isinstance(arg, str):
+			print("    '%s' : '%s'" % (argname, arg), file=f)
+		elif isinstance(arg, _Signal):
+			print("    SIGNAL '%s' : %030s(%s)" % (argname, _TYPE(arg), arg._type.__name__), file=f)
+
+	print(60 * "=")
+	print("TOP level module '%s'" % hierarchy.top.name)
+
+	for inst in hierarchy.hierarchy:
+		print("Module: '%s'" % inst.name, file=f)
+
+		print(60 * "=")
+		print("  Arg:", file=f)
+		for argname, arg in inst.obj.symdict.items():
+			if isinstance(arg, str):
+				print("    '%s' : '%s'" % (argname, arg), file=f)
+			elif isinstance(arg, _Signal):
+				print("    SIGNAL '%s' : %030s(%s)" % (argname, _TYPE(arg), arg._type.__name__), file=f)
+
+		print(60 * "=")
+
+		print("  Signals:", file=f)
+		for signame, sig in inst.sigdict.items():
+			print("    '%s' : %030s(%s)" % (signame, _TYPE(sig), sig._type.__name__), file=f)
 
 
-	_annotateTypes(genlist)
+		print("  Processes:", file=f)
+		l = []
+		for i in inst.subs:
+			if isinstance(i[1], _Block):
+				print("    '%s' : %s" % (i[0], _TYPE(i[1])), file=f)
+			else:
+				print("    '%s' : %s" % (i[0], _TYPE(i[1])), file=f)
+				l.append(i[1])
 
-	func._inferInterface()
 
-	m = design.addModule(func.name)
+def collect_generators(instance, absnames):
+	genlist = []
+	
+	for i in instance.subs:
+		if isinstance(i, (_AlwaysComb, _AlwaysSeq, _Always)):
+			pass
+		else:
+			raise TypeError("Unsupported function type")
+ 
+	return genlist
 
-	m.collectWires(siglist, func.argdict)
+from itertools import chain
 
-	for tree in genlist:
+def analyze_signals(instance):
+	sigdict = instance.sigdict
+	memdict = instance.memdict
+	siglist = []
+	memlist = []
+
+	namedict = dict(chain(sigdict.items(), memdict.items()))
+
+	for n, s in sigdict.items():
+		if s._name is not None:
+			continue
+		if isinstance(s, _SliceSignal):
+			continue
+		s._name = _makeName(n, [], namedict)
+		if not s._nrbits:
+			raise ConversionError(_error.UndefinedBitWidth, s._name)
+		# slice signals
+		for sl in s._slicesigs:
+			sl._setName(hdl)
+		siglist.append(s)
+	# list of signals
+	for n, m in memdict.items():
+		if m.name is not None:
+			continue
+		m.name = _makeName(n, [], namedict)
+		memlist.append(m)
+
+	return siglist, memlist
+
+def convert_rtl(h, instance, design):
+
+	blk = instance.obj
+	blk._inferInterface()
+	func = instance.obj.func
+
+	# Add module with implementation (not instance) name
+	# The name is a unique key mangled from the interface
+	key = create_key(blk)
+	m = design.addModule(key)
+
+#	for i in siglist:
+#		print(i._name)
+	print(blk.argdict)
+	argnames = inspect.signature(func).parameters.keys()
+	print("ARGS", blk.args)
+	print("ARGN", argnames)
+
+	m.collectWires(instance, argnames)
+
+	# Visit generators:
+	for tree in instance.genlist:
+		print(">>>>>> '%s' " % tree.name)
 		if tree.kind == _kind.ALWAYS:
 			Visitor = _ConvertAlwaysVisitor
 		elif tree.kind == _kind.INITIAL:
@@ -634,17 +718,120 @@ def convert_rtl(hierarchy, func, tbname, design, write_tb, trace):
 			Visitor = _ConvertAlwaysCombVisitor
 
 		v = Visitor(m, tree)
+		v.dbg(tree, GREEN, "SYMBOLS", tree.name)
+		for sym, node  in tree.symdict.items():
+			if isinstance(node, _Signal):
+				if hasattr(node, "obj"):
+					print(sym, node.obj)
+				else:
+					print(sym, node._type)
+			else:
+				pass
+				# print(sym, type(node))
+		v.dbg(tree, GREEN, "-------", "")
 		v.visit(tree)
+	
+	# Visit instances:
+	for name, inst in instance.instances:
+		key = create_key(inst)
+		impl = inst
+		impl._inferInterface()
+		print("++++++++  %s  ++++++++" % key)
+		print("++++++++++++++++")
+
+		c = m.addCell(ID(name), ID(key))
+		c.parameters = parm = {}
+
+		# print(impl.argnames)
+
+		# Grab implementation function argument names
+		argnames = inspect.signature(impl.func).parameters.keys()
+
+
+		for i, n in enumerate(argnames):
+			a = impl.args[i]
+			print("%s <== %d" % (n, a))
+
+
+			# By default, a cell port is an input
+			is_output = False
+
+			if isinstance(a, int) or isinstance(a, bool):
+				# sig = ConstSignal(a)
+				# c.setPort(PID(n), sig)
+				parm[n] = a
+			elif isinstance(a, _Signal):
+				sig = m.wires[a._name]
+				if a._driven:
+					print("OUT wire", a._name)
+					# port.get().port_output = True
+					# s = Signal(port)
+					c.setPort(PID(n), sig)
+					# m.connect(sig, s)
+				else:
+					port = m.addWire(None, len(a))
+					print("IN wire", a._name)
+					port.get().port_input = True
+					s = Signal(port)
+					c.setPort(PID(n), s)
+					m.connect(s, sig)
+
+
+			else:
+				raise Synth_Nosupp("Can't handle this YET")
+
+
+def convert_hierarchy(h, func, design, trace = False):
+
+	# arglist = _flatten(h.top)
+
+	# print(arglist)
+
+#	genlist = _analyzeGens(arglist, h.absnames)
+#
+#	print(">>>>>>>>>>>>>>>>>>>")
+#	for tree in genlist:
+#		print(">>  '%s'" % tree.name)
+#		v = _AnnotateTypesVisitor(tree)
+#		v.visit(tree)
+#	print(">>>>>>>>>>>>>>>>>>>")
+		
+	for inst in h.hierarchy:
+		print("Analyze signals for", inst)
+		analyze_signals(inst)
+		l = []
+		block_instances = []
+		for nm, elem in inst.subs:
+			if isinstance(elem, _Block):
+				block_instances.append((nm, elem))
+			else:
+				l.append(elem)
+
+
+		inst.instances = block_instances
+		inst.genlist = _analyzeGens(l, h.absnames)
+
+	for inst in h.hierarchy:
+		print(GREEN + "========================================================" + OFF)
+		print(GREEN + "Module: '%s'" % inst.name + OFF)
+
+		if not inst.cell:
+			convert_rtl(h, inst, design)
+
+	top = h.hierarchy[0]
+
+	write_tb = True
 
 	if write_tb:
+		tbname = top.name
 		tbfile = open("tb_%s_mapped.v" % tbname, 'w')
-		func.name = tbname # Hack to overwrite DUT name
-		_writeTestBench(tbfile, func, trace, "1ps/1ps")
+		top.obj.name = tbname # Hack to overwrite DUT name
+		_writeTestBench(tbfile, top.obj, trace, "1ps/1ps")
 		tbfile.close()
 
-	return design
+	return top
 
-class YosysModuleConvertor(object):
+class YosysModuleConvertor:
 	def __init__(self):
 		self.name = None
 		self.design = None
@@ -657,17 +844,19 @@ class YosysModuleConvertor(object):
 		else:
 			name = str(self.name)
 
-		try:
-			h = _getHierarchy(name, func)
-		finally:
-			_converting = 0
+		h = Hierarchy(name, func)
 
 		_genUniqueSuffix.reset()
 		_enumTypeSet.clear()
 		_slice_constDict.clear()
 		# _enumPortTypeSet = set()
 
-		convert_rtl(h, func, name, self.design, True, self.trace)
+		func._inferInterface()
+		# dump_hierarchy(h, func)
+		top = convert_hierarchy(h, func, self.design, self.trace)
+		self.design.set_top_module(top)
+
+
 
 
 toYosysModule = YosysModuleConvertor()
