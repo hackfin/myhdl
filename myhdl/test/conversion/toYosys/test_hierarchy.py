@@ -28,7 +28,7 @@ def lfsr8_multi(clk, ce, reset, dout, debug):
 def test_lfsr():
 	UNIT = lfsr8_multi
 	arst = False
-	run_conversion(UNIT, arst)
+	run_conversion(UNIT, arst, None, True)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 200)
 
 

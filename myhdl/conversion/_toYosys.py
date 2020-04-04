@@ -85,16 +85,18 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		self.visit(a)
 		self.visit(b)
 
-
 		if a.syn.isConst() and b.syn.isConst():
 			sm = SynthesisMapper(SM_WIRE)
 			self.dbg(node, BLUEBG, "BINOP CONST EXPR", "%s" % (node.op))
 			res = self.const_eval(node)
 			sm.q = ConstSignal(res, res.bit_length())
 			del a.syn, b.syn
-
 		else:
-			sm = m.apply_binop(node, a.syn, b.syn)
+			try:
+				sm = m.apply_binop(node, a.syn, b.syn)
+			except AttributeError:
+				self.dbg(node, REDBG, "FAILURE", "Attribute failure, a: %s b: %s" % (type(a), type(b)))
+				raise AssertionError
 
 		node.syn = sm
 
@@ -362,11 +364,17 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 
 	def visit_NameConstant(self, node):
 		print("ID", node.id)
+		raise Synth_Nosupp("Can't handle this YET")
 
 	def visit_Name(self, node):
 		m = self.context
-		if node.id in self.tree.vardict:
+		# Check wires first
+		if node.id in m.wires:
 			d = m.wires
+			sm = SynthesisMapper(SM_WIRE)
+			sm.q = d[node.id]
+			node.syn = sm
+		elif node.id in self.tree.vardict:
 			if node.id in self.variables:
 				node.syn = self.variables[node.id]
 			else:
@@ -374,14 +382,14 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				self.variables[node.id] = None
 				node.syn = sm
 				self.dbg(node, GREEN, "Init Variable", node.id)
-		elif node.id in m.wires:
-			d = m.wires
-			sm = SynthesisMapper(SM_WIRE)
-			sm.q = d[node.id]
-			node.syn = sm
-
 		else:
-			raise KeyError("'%s' not in wires" % node.id)
+			if isinstance(node.value, int):
+				self.dbg(node, REDBG, "possible accessing module wide variable", node.id)
+				sm = SynthesisMapper(SM_NUM)
+				sm.q = ConstSignal(node.value)
+				node.syn = sm
+			else:
+				raise KeyError("'%s' not in dictionary" % node.id)
 
 #
 #	def visit_Pass(self, node):
@@ -591,52 +599,13 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 def _TYPE(x):
 	return type(x).__name__
 		
+import sys
+PY2 = sys.version_info[0] == 2
 
-def dump_hierarchy(hierarchy, func, outfile = "/tmp/hdump.txt"):
-	f = open(outfile, "w")
-	# import sys
-	# f = sys.stdout
-	l = 0
-	print("  Arguments:", file=f)
-	for argname, arg in func.argdict.items():
-		print("    '%s' : %030s(%s)" % (argname, _TYPE(arg), arg._type.__name__), file=f)
-
-	print("  Symbols:", file=f)
-	for argname, arg in func.symdict.items():
-		if isinstance(arg, str):
-			print("    '%s' : '%s'" % (argname, arg), file=f)
-		elif isinstance(arg, _Signal):
-			print("    SIGNAL '%s' : %030s(%s)" % (argname, _TYPE(arg), arg._type.__name__), file=f)
-
-	print(60 * "=")
-	print("TOP level module '%s'" % hierarchy.top.name)
-
-	for inst in hierarchy.hierarchy:
-		print("Module: '%s'" % inst.name, file=f)
-
-		print(60 * "=")
-		print("  Arg:", file=f)
-		for argname, arg in inst.obj.symdict.items():
-			if isinstance(arg, str):
-				print("    '%s' : '%s'" % (argname, arg), file=f)
-			elif isinstance(arg, _Signal):
-				print("    SIGNAL '%s' : %030s(%s)" % (argname, _TYPE(arg), arg._type.__name__), file=f)
-
-		print(60 * "=")
-
-		print("  Signals:", file=f)
-		for signame, sig in inst.sigdict.items():
-			print("    '%s' : %030s(%s)" % (signame, _TYPE(sig), sig._type.__name__), file=f)
+if not PY2:
+	from .auxiliaries import dump_hierarchy
 
 
-		print("  Processes:", file=f)
-		l = []
-		for i in inst.subs:
-			if isinstance(i[1], _Block):
-				print("    '%s' : %s" % (i[0], _TYPE(i[1])), file=f)
-			else:
-				print("    '%s' : %s" % (i[0], _TYPE(i[1])), file=f)
-				l.append(i[1])
 
 
 def collect_generators(instance, absnames):
@@ -750,17 +719,11 @@ def convert_rtl(h, instance, design):
 
 		for i, n in enumerate(argnames):
 			a = impl.args[i]
-			print("%s <== %d" % (n, a))
-
 
 			# By default, a cell port is an input
 			is_output = False
 
-			if isinstance(a, int) or isinstance(a, bool):
-				# sig = ConstSignal(a)
-				# c.setPort(PID(n), sig)
-				parm[n] = a
-			elif isinstance(a, _Signal):
+			if isinstance(a, _Signal):
 				sig = m.wires[a._name]
 				if a._driven:
 					print("OUT wire", a._name)
@@ -775,8 +738,18 @@ def convert_rtl(h, instance, design):
 					s = Signal(port)
 					c.setPort(PID(n), s)
 					m.connect(s, sig)
-
-
+			elif isinstance(a, intbv):
+				port = m.addWire(None, len(a))
+				s = Signal(port)
+				sig = ConstSignal(a, len(a))
+				c.setPort(PID(n), s)
+				m.connect(s, sig)
+			elif isinstance(a, int) or isinstance(a, bool):
+				# sig = ConstSignal(a)
+				# c.setPort(PID(n), sig)
+				parm[n] = a
+			elif a == None:
+				pass
 			else:
 				raise Synth_Nosupp("Can't handle this YET")
 
@@ -855,8 +828,6 @@ class YosysModuleConvertor:
 		# dump_hierarchy(h, func)
 		top = convert_hierarchy(h, func, self.design, self.trace)
 		self.design.set_top_module(top)
-
-
 
 
 toYosysModule = YosysModuleConvertor()
