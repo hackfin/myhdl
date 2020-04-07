@@ -21,7 +21,9 @@ from myhdl.conversion._analyze import (_analyzeGens, _makeName,
 
 from myhdl._ShadowSignal import _ShadowSignal, _SliceSignal, _TristateDriver
 
-from myhdl import intbv, EnumType, concat
+from myhdl import intbv, concat
+
+from myhdl._blackbox import _BlackBox
 
 try:
 	from myhdl.conversion.yshelper import *
@@ -71,6 +73,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		self.variables = { }
 		self.depth = 0
 		self.state = S_NEUTRAL
+		self.cur_enable = None
 		self.cur_module = "undefined"
 
 	def generic_visit(self, node):
@@ -137,7 +140,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		self.visit(rhs)
 
 		t = SM_WIRE
-
+		sm = None
 
 		if not hasattr(rhs, "obj"):
 			name = rhs.id
@@ -157,9 +160,33 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			self.dbg(node, BLUEBG, "ASSIGN", "assign to variable %s" % (name))
 			dst = None
 		elif isinstance(lhs.obj, _Signal):
-			self.dbg(node, BLUEBG, "ASSIGN", "assign to type %s" % (type(lhs.obj)))
-
-			dst = self.findSignal(lhs)
+			drvname = lhs.obj._name # Default driver name
+			if hasattr(lhs, "syn"):
+				# We already have an assigned port
+				self.dbg(node, BLUEBG, "ASSIGN", "assign to preassigned Port type %s" % (type(lhs)))
+				dst = lhs.syn.q
+				# Special case: detect memory cell read/write:
+				if lhs.syn.el_type == SM_MEMPORT:
+					self.dbg(node, GREEN, "MEMPORT", "write port detected %s" % (type(lhs)))
+					port = lhs.syn
+					sm = port
+					sm.q = rhs.syn.q # Copy output from RHS as input to memport
+					name = NEW_ID(__name__, node, "memwr")
+					sm.cell, enable = self.handle_memport(port, name, "memwr")
+					sm.sources = { 'enable' : enable } # Store in 'open sources' dict
+				elif rhs.syn.el_type == SM_MEMPORT:
+					self.dbg(node, GREEN, "MEMPORT", "read port detected %s" % (type(rhs)))
+					name = NEW_ID(__name__, node, "memrd")
+					port = rhs.syn
+					sm = port
+					sm.cell, enable = self.handle_memport(port, name, "memrd")
+					sm.sources = { 'enable' : enable }
+				else:
+					pass
+				# FIXME: We might eliminate extra BUF drivers
+			else:
+				self.dbg(node, BLUEBG, "ASSIGN", "assign to Signal type %s" % (type(lhs.obj)))
+				dst = self.findSignal(lhs)
 
 			# Size handling and sign extension:
 			if dst.size() > src.size():
@@ -175,11 +202,12 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		else:
 			raise Synth_Nosupp("Can't handle this YET")
 
-		sm = SynthesisMapper(t)
-		sm.q = src
+		if not sm:
+			sm = SynthesisMapper(t)
+			sm.q = src
 
 		if self.state == S_MUX:
-			node.driver = lhs.obj._name
+			node.driver = drvname
 		elif dst:
 			m = self.context
 			m.connect(dst, src)
@@ -259,6 +287,8 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 #		print(_n())
 
 	def visit_If(self, node):
+		if node.ignore:
+			return
 		if self.state == S_TIE_DEFAULTS:
 			for stmt in node.body:
 				if isinstance(stmt, ast.If):
@@ -383,13 +413,19 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				node.syn = sm
 				self.dbg(node, GREEN, "Init Variable", node.id)
 		else:
-			if isinstance(node.value, int):
+			if hasattr(node, "value") and isinstance(node.value, int):
 				self.dbg(node, REDBG, "possible accessing module wide variable", node.id)
 				sm = SynthesisMapper(SM_NUM)
 				sm.q = ConstSignal(node.value)
-				node.syn = sm
+			elif node.id in m.memories:
+				mdesc = m.memories[node.id]
+				sm = SynthesisMapper(SM_MEMPORT)
+				name = NEW_ID(__name__, node, "mem")
+				sm.q = m.addSignal(name, len(mdesc.elObj))
 			else:
 				raise KeyError("'%s' not in dictionary" % node.id)
+
+			node.syn = sm
 
 #
 #	def visit_Pass(self, node):
@@ -405,8 +441,17 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 #		print(_n())
 
 	def visit_Subscript(self, node):
+		obj = node.value.obj
+
 		if isinstance(node.slice, ast.Slice):
 			self.accessSlice(node)
+		elif isinstance(obj, list):
+			self.visit(node.value)
+			node.syn = node.value.syn # Pass on
+			self.dbg(node, REDBG, "MEMORY PORT FOR '%s', addr: %s" % (node.value.id, node.slice.value.obj._name))
+			# Memory parameters:
+			node.syn.memid = node.value.id
+			node.syn.addrsig = node.slice.value.obj
 		else:
 			self.accessIndex(node)
 	
@@ -471,8 +516,12 @@ class _ConvertAlwaysDecoVisitor(_ConvertVisitor):
 		senslist = self.manageEdges(node.body[-1], senslist)
 		singleEdge = (len(senslist) == 1) and isinstance(senslist[0], _WaiterList)
 		if singleEdge:
+			for i in senslist:
+				for j in i:
+					print(type(j), dir(j))
 			clknode = senslist[0]
 			clk = clknode.sig
+			print(clk)
 			if isinstance(clknode, _PosedgeWaiterList):
 				clkpol = True
 			elif isinstance(clknode, _NegedgeWaiterList):
@@ -480,9 +529,10 @@ class _ConvertAlwaysDecoVisitor(_ConvertVisitor):
 			else:
 				self.raiseError(clknode, "Invalid clk type")
 
-			self.dbg(node, VIOBG, "PROCESS", "%s() Single edge:" % self.tree.name + repr(clk))
+			self.dbg(node, VIOBG, "PROCESS", "%s() Single edge:" % self.tree.name + clk._name)
+			self.clk = clk
+			self.clkpol = clkpol
 			# print(clk)
-			self.cur_clk = clk._name
 		else:
 			raise Synth_Nosupp("Can't handle this YET")
 
@@ -545,7 +595,7 @@ class _ConvertAlwaysSeqVisitor(_ConvertVisitor):
 			self.raiseError(clknode, "Invalid clk type")
 
 		clk = clknode.sig
-		self.cur_clk = clk._name
+		self.clk = clk
 
 		if isasync:
 			self.handle_toplevel_reset_process(node, handle_adff, reset, clk, clkpol)
@@ -557,6 +607,7 @@ class _ConvertAlwaysSeqVisitor(_ConvertVisitor):
 class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 	def __init__(self, context, tree):
 		_ConvertVisitor.__init__(self, context, tree)
+		self.clk = None
 
 	def visit_FunctionDef(self, node):
 		self.cur_module = node.name
@@ -578,6 +629,9 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 					self.dbg(stmt, REDBG, "DRIVERS", name)
 
 	def visit_If(self, node):
+		"always_comb If"
+		if node.ignore:
+			return
 		if self.state == S_TIE_DEFAULTS:
 			self.dbg(node, REDBG, "TIE_DEFAULT", "SKIP, not applicable")
 		else:
@@ -650,12 +704,44 @@ def analyze_signals(instance):
 
 	return siglist, memlist
 
-def convert_rtl(h, instance, design):
-
+def convert_wires(m, c, a, n):
+	if isinstance(a, _Signal):
+		if a._name not in m.wires:
+			print("## Signal %s unused" % a._name)
+		else:
+			sig = m.wires[a._name]
+			if a._driven:
+				print("OUT wire", a._name)
+				# port.get().port_output = True
+				# s = Signal(port)
+				c.setPort(PID(n), sig)
+				# m.connect(sig, s)
+			else:
+				port = m.addWire(None, len(a))
+				print("IN wire", a._name)
+				port.get().port_input = True
+				s = Signal(port)
+				c.setPort(PID(n), s)
+				m.connect(s, sig)
+	elif isinstance(a, intbv):
+		port = m.addWire(None, len(a))
+		s = Signal(port)
+		sig = ConstSignal(a, len(a))
+		c.setPort(PID(n), s)
+		m.connect(s, sig)
+	elif isinstance(a, int) or isinstance(a, bool):
+		# sig = ConstSignal(a)
+		# c.setPort(PID(n), sig)
+		c.parameters[n] = a
+	elif a == None:
+		pass
+	else:
+		for i in a.__dict__.items():
+			convert_wires(m, c, i[1], n + "_" + i[0])
+		
+def infer_handle_interface(design, instance):
 	blk = instance.obj
 	blk._inferInterface()
-	func = instance.obj.func
-
 	# Add module with implementation (not instance) name
 	# The name is a unique key mangled from the interface
 	key = create_key(blk)
@@ -663,12 +749,39 @@ def convert_rtl(h, instance, design):
 
 #	for i in siglist:
 #		print(i._name)
-	print(blk.argdict)
-	argnames = inspect.signature(func).parameters.keys()
-	print("ARGS", blk.args)
+	# print(blk.argdict)
+	argnames = inspect.signature(blk.func).parameters.keys()
+	# print("ARGS", blk.args)
 	print("ARGN", argnames)
 
+
 	m.collectWires(instance, argnames)
+
+	return m
+
+def infer_rtl(h, instance, design):
+	print(GREEN + "\tInfer blackbox: '%s'" % instance.name + OFF)
+	m = infer_handle_interface(design, instance)
+	intf = BBInterface("bb_" + instance.name, m)
+	instance.obj.infer(m, intf)
+	print("WIRES")
+	# Connect wires
+	for n, i in intf.interface.items():
+		sig = m.wires[n]
+		w = i.as_wire()
+		if w.port_input:
+			m.connect(i, sig)
+		if w.port_output:
+			m.connect(sig, i)
+	# z = input("--- HIT RETURN")
+
+	# infer_obj.dump()
+
+
+def convert_rtl(h, instance, design):
+	m = infer_handle_interface(design, instance)
+
+	m.collectMemories(instance)
 
 	# Visit generators:
 	for tree in instance.genlist:
@@ -706,10 +819,9 @@ def convert_rtl(h, instance, design):
 		impl = inst
 		impl._inferInterface()
 		print("++++++++  %s  ++++++++" % key)
-		print("++++++++++++++++")
 
 		c = m.addCell(ID(name), ID(key))
-		c.parameters = parm = {}
+		c.parameters = {}
 
 		# print(impl.argnames)
 
@@ -718,41 +830,17 @@ def convert_rtl(h, instance, design):
 
 
 		for i, n in enumerate(argnames):
-			a = impl.args[i]
+			try:
+				a = impl.args[i]
+			except IndexError:
+				print(argnames)
+				print(i, impl.args)
+				# raise AssertionError
 
 			# By default, a cell port is an input
 			is_output = False
 
-			if isinstance(a, _Signal):
-				sig = m.wires[a._name]
-				if a._driven:
-					print("OUT wire", a._name)
-					# port.get().port_output = True
-					# s = Signal(port)
-					c.setPort(PID(n), sig)
-					# m.connect(sig, s)
-				else:
-					port = m.addWire(None, len(a))
-					print("IN wire", a._name)
-					port.get().port_input = True
-					s = Signal(port)
-					c.setPort(PID(n), s)
-					m.connect(s, sig)
-			elif isinstance(a, intbv):
-				port = m.addWire(None, len(a))
-				s = Signal(port)
-				sig = ConstSignal(a, len(a))
-				c.setPort(PID(n), s)
-				m.connect(s, sig)
-			elif isinstance(a, int) or isinstance(a, bool):
-				# sig = ConstSignal(a)
-				# c.setPort(PID(n), sig)
-				parm[n] = a
-			elif a == None:
-				pass
-			else:
-				raise Synth_Nosupp("Can't handle this YET")
-
+			convert_wires(m, c, a, n)
 
 def convert_hierarchy(h, func, design, trace = False):
 
@@ -780,6 +868,10 @@ def convert_hierarchy(h, func, design, trace = False):
 			else:
 				l.append(elem)
 
+		print(GREEN + "========================================================" + OFF)
+		for m in inst.memdict.items():
+			print(GREEN + "Memory: %s" % m[0] + OFF)
+		print(GREEN + "========================================================" + OFF)
 
 		inst.instances = block_instances
 		inst.genlist = _analyzeGens(l, h.absnames)
@@ -789,7 +881,12 @@ def convert_hierarchy(h, func, design, trace = False):
 		print(GREEN + "Module: '%s'" % inst.name + OFF)
 
 		if not inst.cell:
-			convert_rtl(h, inst, design)
+			infer_obj = inst.obj
+			fn = infer_obj.func
+			if isinstance(infer_obj, _BlackBox):
+				infer_rtl(h, inst, design)
+			else:
+				convert_rtl(h, inst, design)
 
 	top = h.hierarchy[0]
 

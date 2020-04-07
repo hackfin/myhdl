@@ -57,6 +57,8 @@ class _Instance(object):
         self.memdict = memdict
         self.name = None
 
+# FIXME
+# What braindead idea is that to use a global dictionary???
 _memInfoMap = {}
 
 
