@@ -35,6 +35,7 @@ import myhdl
 import myhdl
 from myhdl import *
 from myhdl import ConversionError
+from myhdl._blackbox import SynthesisObject
 from myhdl._always_comb import _AlwaysComb
 from myhdl._always_seq import _AlwaysSeq
 from myhdl._always import _Always
@@ -169,6 +170,8 @@ def _analyzeGens(top, absnames):
             else:
                 v = _AnalyzeAlwaysDecoVisitor(tree, g.senslist)
             v.visit(tree)
+        elif isinstance(g, SynthesisObject):
+            pass
         else:  # @instance
             f = g.gen.gi_frame
             tree = g.ast

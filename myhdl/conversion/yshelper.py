@@ -16,7 +16,7 @@ from myhdl.conversion._misc import (_get_argnames)
 
 from pyosys import libyosys as ys
 
-SM_NUM, SM_BOOL, SM_STRING, SM_WIRE, SM_RECORD, SM_VAR = range(6)
+SM_NUM, SM_BOOL, SM_STRING, SM_WIRE, SM_RECORD, SM_VAR, SM_MEMPORT = range(7)
 
 DEFER_MUX, DEFER_RESERVED = range(2)
 
@@ -34,8 +34,8 @@ class DebugOutput:
 	def dbg(self, node, kind, msg = "DBG", details = "MARK"):
 		lineno = self.getLineNo(node)
 		lineno += self.tree.lineoffset
-		# if kind == REDBG:
-		print("%s: %s:%d %s" % (kind + msg + OFF, self.tree.sourcefile, lineno, details))
+		if kind == REDBG:
+			print("%s: %s:%d %s" % (kind + msg + OFF, self.tree.sourcefile, lineno, details))
 
 class Synth_Nosupp(Exception):
 	def __init__(self, value):
@@ -96,7 +96,7 @@ class Design:
 		return self.design
 
 	def addModule(self, name):
-		print("Adding module with name:", name)
+		print(GREEN + "Adding module with name:" + OFF, name)
 		m = self.design.addModule(ID(name))
 		return Module(m)
 
@@ -224,6 +224,8 @@ class Module:
 		self.wires = {} # Local module wires
 		self.variables = {}
 		self.wiring = {}
+		self.memories = {}
+		self.inferred_memories = {}  # Maybe temporary: Track inferred memories
 		self.guard = {}
 		self.user = [] # Module users
 	
@@ -277,7 +279,7 @@ class Module:
 		return sm
 
 	def apply_unop(self, name, op, a, q):
-		self._opmap[type(op)](self.module, name, a, q)
+		self._opmap[type(op)][0](self.module, name, a, q)
 
 	def addWire(self, name, n, public=False):
 		# print(type(name))
@@ -300,9 +302,60 @@ class Module:
 		w = self.addWire(name, n, public)
 		return ys.SigSpec(w.get())
 
+	def findSignal(self, identifier):
+		if identifier in self.memories:
+			elem = self.memories[identifier]
+		elif identifier in self.wires:
+			elem = self.wires[identifier]
+		else:
+			elem = self.wires[self.wiring[identifier]]
+
+		return elem
+
+	def collectArg(self, name, arg):
+		d = self.wires
+		if isinstance(arg, _Signal):
+			s = len(arg)
+			w = self.addWire(name, s, True)
+			pname = arg._name
+			if name != pname:
+				self.wiring[pname] = name
+			if arg._driven:
+				print("Wire OUT %s, parent: %s" % (name, pname))
+				w.get().port_output = True
+			else:
+				print("Wire IN %s, parent %s" % (name, pname))
+				w.get().port_input = True
+			
+			# FIXME: Works only for const values. When using a parametrized value,
+			# we need to make sure the cell gets the corresponding parameter
+			self.defaults[name] = arg._init
+			d[name] = Signal(w)
+		elif isinstance(arg, int):
+			print("Const Wire %s" % name)
+			d[name] = ConstSignal(arg, arg.bit_length())
+		elif isinstance(arg, bool):
+			d[name] = ConstSignal(arg, 1)
+		elif isinstance(arg, block):
+			print("SKIP block arg %s" % arg)
+		elif isinstance(arg, intbv):
+			# print("Const signal Wire IN %s" % (name))
+			s = len(arg)
+			w = self.addWire(name, s, True)
+			w.get().port_input = True
+			d[name] = Signal(w)
+		elif arg == None:
+			pass
+		else:
+			print("Class %s" % name)
+			for i in arg.__dict__.items():
+				self.collectArg(name + "_" + i[0], i[1])
+			
+
+
 	def collectWires(self, instance, args):
-		initvalues = { }
-		d = { }
+		self.defaults = initvalues = { }
+		self.wires = d = { }
 		blk = instance.obj
 		sigs = instance.sigdict
 
@@ -312,42 +365,10 @@ class Module:
 		for i, name in enumerate(args):
 			if name in sigs:
 				sig = sigs[name]
-				s = len(sig)
-				if isinstance(sig, _Signal):
-					print("SIGNAL", sig._init)
-					w = self.addWire(name, s, True)
-					pname = sig._name
-					if name != pname:
-						self.wiring[pname] = name
-					if sig._driven:
-						print("Wire OUT %s, parent: %s" % (name, pname))
-						w.get().port_output = True
-					else:
-						print("Wire IN %s, parent %s" % (name, pname))
-						w.get().port_input = True
-					
-					# FIXME: Works only for const values. When using a parametrized value,
-					# we need to make sure the cell gets the corresponding parameter
-					initvalues[name] = sig._init
-					d[name] = Signal(w)
-				else:
-					raise AssertionError("Unsupported wire")
+				self.collectArg(name, sig)
 			elif i < l:
 				arg = blk.args[i]
-				if isinstance(arg, int):
-					print("Const Wire %s" % name)
-					d[name] = ConstSignal(arg, arg.bit_length())
-				elif isinstance(arg, block):
-					print("SKIP block arg %s" % arg)
-				elif isinstance(arg, intbv):
-					print("Const signal Wire IN %s, parent %s" % (name, pname))
-					w = self.addWire(name, s, True)
-					w.get().port_input = True
-					d[name] = Signal(w)
-				elif arg == None:
-					pass
-				else:
-					raise Synth_Nosupp("Unsupported wire type %s, signal '%s' in %s" % (type(arg).__name__, name, instance.name))
+				self.collectArg(name, arg)
 			else:
 				print("SKIP default arg %s" % name)
 
@@ -356,15 +377,18 @@ class Module:
 				if isinstance(s._val, EnumItemType):
 					d[n] = self.addSignal(n, s._nrbits)
 				else:
-					print("Internal Wire %s type %s, init: %d" % (n, repr(s._type), s._init))
+					# print("Internal Wire %s type %s, init: %d" % (n, repr(s._type), s._init))
 					l = get_size(s)
 					d[n] = self.addSignal(n, l)
 
 				initvalues[n] = s._init
 
-		self.defaults = initvalues
-		self.wires = d
 		self.module.fixup_ports()
+
+	def collectMemories(self, instance):
+		for m in instance.memdict.items():
+			print("MEMORY", m[0], m[1])
+			self.memories[m[0]] = ( m[1] )
 
 def dump(n):
 	if isinstance(n, ast.Num):
@@ -410,22 +434,39 @@ class Instance:
 	def __repr__(self):
 		return self.name
 
+def append_sig(i, a):
+	if isinstance(i, _Signal) or isinstance(i, list) or isinstance(i, tuple):
+		a += "_%d" % len(i)
+	elif isinstance(i, intbv):
+		a += "_%d" % len(i)
+	elif isinstance(i, int):
+		a += "_c%d" % i
+	elif isinstance(i, str):
+		a += '_%s_' % i
+	elif isinstance(i, block):
+		a += '_%s_' % i.func.__name__
+	elif i == None:
+		pass
+	else:
+		a += class_key(i)
+
+	return a
+
+def class_key(inst):
+	c = type(inst)
+	print(c)
+
+	a = ""
+	for i in inst.__dict__.items():
+		a = append_sig(i[1], a)
+
+	return a
+
 def create_key(inst):
 	"Create a unique key for a specific instance"
 	a = inst.func.__name__
 	for i in inst.args:
-		if isinstance(i, _Signal) or isinstance(i, list) or isinstance(i, tuple):
-			a += "_%d" % len(i)
-		elif isinstance(i, intbv):
-			a += "_%d" % len(i)
-		elif isinstance(i, int):
-			a += "_c%d" % i
-		elif isinstance(i, block):
-			a += '_%s_' % i.func.__name__
-		elif i == None:
-			pass
-		else:
-			raise TypeError("Unsupported entity argument type %s in %s" % ( type(i).__name__, inst.name))
+		a = append_sig(i, a)
 
 	return a
 
@@ -440,6 +481,7 @@ differing instances of the same architecture"""
 			impl = modinst.func.__name__
 			# Create some 'hash' according to interface specs
 			key = create_key(modinst)
+			print("insert key %s" % key)
 
 			subs = [(s.name, s) for s in modinst.subs]
 			inst = Instance(level, modinst, subs, modinst.sigdict, modinst.memdict)
@@ -527,6 +569,11 @@ Used for separation of common functionality of visitor classes"""
 		assert node.attr == 'next'
 		self.visit(node.value)
 		node.obj = self.getObj(node.value)
+		if hasattr(node.value, "syn"):
+			self.dbg(node, BLUEBG, "MAYBE RAM ASSIGN ",  "obj: " + repr(node.value))
+			node.syn = node.value.syn # pass on
+
+		
 
 	def getAttr(self, node):
 		if isinstance(node.value, ast.Subscript):
@@ -564,6 +611,8 @@ Used for separation of common functionality of visitor classes"""
 			e = getattr(obj, node.attr)
 			sm.q = ConstSignal(int(e), obj._nrbits)
 			node.syn = sm
+		else:
+			self.dbg(t, REDBG, "getAttr ",	"unknown " + repr(obj))
 
 	def accessSlice(self, node):
 		sm = SynthesisMapper(SM_WIRE)
@@ -590,18 +639,14 @@ Used for separation of common functionality of visitor classes"""
 	def accessIndex(self, node):
 		sm = SynthesisMapper(SM_WIRE)
 		self.visit(node.value)
+
 		sig = node.value.syn.q
 		sm.q = sig.extract(node.slice.value.n, 1)
 		node.syn = sm
 
 	def findSignal(self, node):
 		identifier = node.obj._name
-		if identifier in self.context.wires:
-			elem = self.context.wires[identifier]
-		else:
-			elem = self.context.wires[self.context.wiring[identifier]]
-
-		return elem
+		return self.context.findSignal(identifier)
 
 	def tie_defaults(self, node):
 		"Tie undefined 'other' inputs to defaults in synchronous processes"
@@ -612,6 +657,34 @@ Used for separation of common functionality of visitor classes"""
 				self.visit(stmt)
 		self.state = prev
 
+	def handle_memport(self, port, name, which):
+		m = self.context
+		c = m.addCell(name, ID(which))
+		port_addr = m.wires[port.addrsig._name]
+		data_w = port.q.size() # Number of data bits
+		c.setPort(PID("DATA"), port.q)
+		c.setPort(PID("ADDR"), port_addr)
+
+		en = m.addSignal(None, data_w)
+		c.setPort(PID("EN"), en)
+			
+		if self.clk != None:
+			clk = m.wires[self.clk._name]
+			c.setPort(PID("CLK"), clk)
+			c.parameters[PID("CLK_ENABLE")] = 1
+			if self.clkpol:
+				c.parameters[PID("CLK_POLARITY")] = 1
+			else:
+				c.parameters[PID("CLK_POLARITY")] = 0
+
+		else:
+			print("ASYNC MEM PORT")
+		c.parameters[PID("MEMID")] = port.memid
+		c.parameters[PID("ABITS")] = len(port.addrsig)
+		c.parameters[PID("WIDTH")] = data_w
+
+		return c, en
+		
 	def handle_toplevel_reset_process(self, node, func, reset, clk, clkpol):
 		"Handle top level synchronous processes with reset"
 		m = self.context
@@ -629,38 +702,72 @@ Used for separation of common functionality of visitor classes"""
 			self.visit(stmt)
 			if isinstance(stmt, ast.If):
 				func(m, stmt, clk, clkpol)
+			# Special treatmemt for memory port without condition:
+			# Wire EN pins to True
+			elif stmt.syn.el_type == SM_MEMPORT:
+				cc = m.addSignal(None, 0)
+				c = ConstSignal(True)
+				en_sig = stmt.syn.sources['enable']
+				for i in range(en_sig.size()):
+					cc.append(c)
+				m.connect(en_sig, cc)
+			else:
+				self.dbg(stmt, GREEN, "HANDLE OTHER", stmt)
+# 				z = input("HIT RETURN")
 
-
-	def handle_mux_statement(self, stmt, casemap):
+	def handle_mux_statement(self, cond, stmt, casemap):
 		"Handle multiplexer case"
 		MARK = "\033[7;32m"
 
-		wires = self.context.wires
+		m = self.context
+		wires = m.wires
+
+		# List of sources that needs to be tracked to top hierarchy
+		sources = []
 
 		for t in stmt:
 			if isinstance(t, ast.Assign):
-				sigid = t.targets[0].obj._name
-				target = wires[sigid]
-				l = target.size()
-				if sigid in casemap:
-					self.dbg(t, REDBG, "DRV_OBSOLETE",	"ineffective previous assignment to '%s'" % sigid)
-				b = t.value
-				mux_b = mux_input(b, target)
-				casemap[sigid] = [ mux_b ]
-			elif isinstance(t, ast.If):
-				self.dbg(t, VIOBG, "VISIT_MUX_NODE",  "")
-				for sigid, drv in t.syn.drivers.items():
+				if hasattr(t.syn, "sources") and 'enable' in t.syn.sources:
+					self.dbg(t, REDBG, "SOURCE", "Open source from %s" % t.syn.memid)
+					next_en = m.addSignal(None, 1)
+					q = m.addSignal(None, 1)
+					name = NEW_ID(__name__, t, "and_enable")
+					and_cell = m.addAnd(name, next_en, cond, q)
+					cc = m.addSignal(None, 0)
+					en_sig = t.syn.sources['enable']
+					for i in range(en_sig.size()):
+						cc.append(q)
+					m.connect(en_sig, cc)
+					sources.append(t.syn.sources)
+				else:
+					sigid = t.targets[0].obj._name
+					target = wires[sigid]
+					l = target.size()
 					if sigid in casemap:
-						self.dbg(t, MARK, "DRV",  "%s has default. Driver entry: %s" % (sigid, drv))
-						print("previous:", casemap[sigid])
-						self.context.connect(drv[1], casemap[sigid][0])
-						casemap[sigid].insert(0, drv[0])
-					else:
-						casemap[sigid] = [drv[0]]
+						self.dbg(t, REDBG, "DRV_OBSOLETE",	"ineffective previous assignment to '%s'" % sigid)
+					b = t.value
+					mux_b = mux_input(b, target)
+					casemap[sigid] = [ mux_b ]
+					
+			elif isinstance(t, ast.If):
+				if t.ignore:
+					self.dbg(t, REDBG, "SKIP_IF",	"ineffective if statement")
+				else:
+					self.dbg(t, VIOBG, "VISIT_MUX_NODE",  "")
+					for sigid, drv in t.syn.drivers.items():
+						if sigid in casemap:
+							self.dbg(t, MARK, "DRV",  "%s has default. Driver entry: %s" % (sigid, drv))
+							print("previous:", casemap[sigid])
+							self.context.connect(drv[1], casemap[sigid][0])
+							casemap[sigid].insert(0, drv[0])
+						else:
+							casemap[sigid] = [drv[0]]
 
 			else:
 				self.dbg(t, MARK, "UNSUPPORTED",  "generating mux")
 				raise AssertionError("Unhandled statement")
+
+		return sources
 
 	def mapToPmux(self, node, sync = False):
 		print("MAP_PMUX %d" % len(node.tests))
@@ -676,7 +783,7 @@ Used for separation of common functionality of visitor classes"""
 			self.dbg(t, GREEN, "CASE[%d]" % i,	"")
 			cc.append(t.syn.q)
 			casemap = {}
-			self.handle_mux_statement(test[1], casemap)
+			self.handle_mux_statement(t.syn.q, test[1], casemap)
 
 			self.dbg(test, GREEN, "\n-- CASEMAP PMUX --", "parallel multiplexer map output:")
 
@@ -697,7 +804,7 @@ Used for separation of common functionality of visitor classes"""
 		if elseclause:
 			print(GREEN + "OTHERS" + OFF)
 			elsemap = {}
-			self.handle_mux_statement(elseclause, elsemap)
+			self.handle_mux_statement(True, elseclause, elsemap)
 
 		other_map = {}
 		for e, i in elsemap.items():
@@ -760,11 +867,11 @@ Used for separation of common functionality of visitor classes"""
 				print(type(cond))
 				raise Synth_Nosupp("Unsupported MapMux selector type ")
 
-			self.handle_mux_statement(stmt, casemap)
+			self.handle_mux_statement(cond, stmt, casemap)
 
 			self.dbg(test, GREEN, "\n-- CASEMAP --", "multiplexer map output:")
 			for n, i in casemap.items():
-				# print("   %s ===> %s" % (n, repr(i)))
+				# print("	%s ===> %s" % (n, repr(i)))
 
 				target = m.wires[n]
 				l = target.size()
@@ -795,12 +902,12 @@ Used for separation of common functionality of visitor classes"""
 		elseclause = node.else_
 		if elseclause:
 			elsemap = {}
-			self.handle_mux_statement(elseclause, elsemap)
+			self.handle_mux_statement(True, elseclause, elsemap)
 
 			self.dbg(node, REDBG, "\n\n-- ELSE CASE --", "multiplexer map output:")
 
 			for n, i in elsemap.items():
-				# print("   %s ===> %s" % (n, repr(i)))
+				# print("	%s ===> %s" % (n, repr(i)))
 				target = m.wires[n]
 
 				if len(i) == 2:
@@ -830,3 +937,39 @@ Used for separation of common functionality of visitor classes"""
 
 		node.syn = sm
 
+
+############################################################################
+# Factory auxiliaries:
+#
+
+class yosys:
+	def __init__(self):
+		self.id = "YOSYS_SYNTHESIS"
+
+
+class BBInterface:
+	"Black box interface"
+	def __init__(self, name, module):
+		self.interface = {}
+		self.name = name
+		self.module = module
+
+	def addWire(self, sig, out = False):
+		m = self.module
+		if isinstance(sig, _Signal):
+			s = len(sig)
+			w = m.addWire(None, s, True)
+			if out:
+				w.get().port_output = True
+				w.get().port_input = False
+			else:
+				w.get().port_output = False
+				w.get().port_input = True
+
+			sigspec = ys.SigSpec(w.get())
+			self.interface[sig._name] = sigspec
+		else:
+			raise AssertionError("Not a Signal")
+			
+		return sigspec
+		

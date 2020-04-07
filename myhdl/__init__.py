@@ -163,6 +163,7 @@ from ._always_seq import always_seq, ResetSignal
 from ._always import always
 from ._instance import instance
 from ._block import block
+from ._blackbox import blackbox, synthesis
 from ._enum import enum, EnumType, EnumItemType
 from ._traceSignals import traceSignals
 
@@ -193,6 +194,8 @@ __all__ = ["bin",
            "instances",
            "instance",
            "block",
+           "blackbox",
+           "synthesis",
            "always_comb",
            "always_seq",
            "ResetSignal",

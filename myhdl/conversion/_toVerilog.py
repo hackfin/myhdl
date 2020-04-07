@@ -54,6 +54,7 @@ from myhdl._Signal import _Signal
 from myhdl._ShadowSignal import _TristateSignal, _TristateDriver
 
 from myhdl._block import _Block
+from myhdl._blackbox import SynthesisObject
 from myhdl._getHierarchy import _getHierarchy
 
 _converting = 0
@@ -62,7 +63,7 @@ _profileFunc = None
 
 def _checkArgs(arglist):
     for arg in arglist:
-        if not isinstance(arg, (GeneratorType, _Instantiator, _UserVerilogCode)):
+        if not isinstance(arg, (GeneratorType, _Instantiator, _UserVerilogCode, SynthesisObject)):
             raise ToVerilogError(_error.ArgType, arg)
 
 
