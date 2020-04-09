@@ -45,10 +45,11 @@ _error.InstanceError = "%s: subblock %s should be encapsulated in a block decora
 
 class _CallInfo(object):
 
-	def __init__(self, name, modctxt, symdict):
+	def __init__(self, name, modctxt, symdict, localdict):
 		self.name = name
 		self.modctxt = modctxt
 		self.symdict = symdict
+		self.localdict = localdict
 
 
 def _getCallInfo():
@@ -83,12 +84,13 @@ def _getCallInfo():
 	frame = funcrec[0]
 	symdict = dict(frame.f_globals)
 	symdict.update(frame.f_locals)
+	localdict = dict(frame.f_locals)
 	modctxt = False
 	if callerrec is not None:
 		f_locals = callerrec[0].f_locals
 		if 'self' in f_locals:
 			modctxt = isinstance(f_locals['self'], _Block)
-	return _CallInfo(name, modctxt, symdict)
+	return _CallInfo(name, modctxt, symdict, localdict)
 
 
 ### I don't think this is the right place for uniqueifying the name.
@@ -218,6 +220,7 @@ class _Block(object):
 		self.subs = _flatten(func(*args, **kwargs))
 		self._verifySubs()
 		self._updateNamespaces()
+		self._signalsInit() # XXX
 		self.verilog_code = self.vhdl_code = None
 		self.sim = None
 		if hasattr(deco, 'verilog_code'):
@@ -242,6 +245,26 @@ class _Block(object):
 				if not inst.modctxt:
 					raise BlockError(_error.InstanceError % (self.name, inst.callername))
 
+	def _signalsInit(self):
+		"Hack to pre-init names of local block-context declared signals"
+		def expand(parent, names, level):
+			if level > 5:
+				print("Depth exceeded")
+				return
+			for n, i in names.items():
+				if isinstance(i, _Signal):
+					if i._origname == None:
+						name = parent + n
+#						print("Init Signal name %s" % name)
+						i._origname = name
+#					else:
+#						print("Signal already has name %s" % i._origname)
+				elif hasattr(i, '__dict__'):
+					expand(n + '_', i.__dict__, level + 1)
+		print("Initializing signals for %s" % self.name)	
+		expand("", self.callinfo.localdict, 0)
+		
+
 	def _updateNamespaces(self):
 		# dicts to keep track of objects used in Instantiator objects
 		usedsigdict = {}
@@ -262,6 +285,15 @@ class _Block(object):
 		# sigdict and losdict from Instantiator objects may contain new
 		# references. Therefore, update the symdict with them.
 		# To be revisited.
+#		print("SIG %s" % self.name)
+#		for n, i in usedsigdict.items():
+#			print(n)
+#		print("LOS %s" % self.name)
+#		for n, i in usedlosdict.items():
+#			print(n)
+#		print()
+
+		# z = input("BLOCK, HIT RETURN")
 		self.symdict.update(usedsigdict)
 		self.symdict.update(usedlosdict)
 		# Infer sigdict and memdict, with compatibility patches from _extractHierarchy

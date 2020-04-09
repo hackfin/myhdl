@@ -1,5 +1,6 @@
 import ast
 from myhdl._block import _Block
+
 # from myhdl._getHierarchy import _getHierarchy
 
 from types import GeneratorType
@@ -16,10 +17,9 @@ from myhdl._compat import StringIO
 from myhdl.conversion._misc import (_error, _kind, _context,
 									_ConversionMixin, _Label, _genUniqueSuffix, _isConstant)
 
-from myhdl.conversion._analyze import (_analyzeGens, _makeName,
+from myhdl.conversion.analyze_ng import (_analyzeGens,  _makeName,
 									   _Ram, _Rom, _enumTypeSet, _slice_constDict)
 
-from myhdl._ShadowSignal import _ShadowSignal, _SliceSignal, _TristateDriver
 
 from myhdl import intbv, concat
 
@@ -44,25 +44,6 @@ def _annotateTypes(genlist):
 	for tree in genlist:
 		v = _AnnotateTypesVisitor(tree)
 		v.visit(tree)
-
-def _flatten(*args):
-	arglist = []
-	for arg in args:
-		if isinstance(arg, _Block):
-			print("Add %s" % type(arg).__name__)
-			arg = arg.subs
-		else:
-			print("Ignoring element type %s" % type(arg).__name__)
-
-		if isinstance(arg, (list, tuple, set)):
-			print("TUPLE", arg)
-			for item in arg:
-				arglist.extend(_flatten(item))
-		else:
-			arglist.append(arg)
-	print("RETURNING", arglist)
-	return arglist
-
 
 ANNOTATE = "\033[7;30m"
 
@@ -186,7 +167,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				# FIXME: We might eliminate extra BUF drivers
 			else:
 				self.dbg(node, BLUEBG, "ASSIGN", "assign to Signal type %s" % (type(lhs.obj)))
-				dst = self.findSignal(lhs)
+				dst = self.findWire(lhs)
 
 			# Size handling and sign extension:
 			if dst.size() > src.size():
@@ -300,7 +281,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				other = i[1]
 				if other:
 					self.dbg(node, REDBG, "TIE_DEFAULT", "Tie to default signal %s" % n)
-					defsig = self.context.wires[n]
+					defsig = self.context.findWireByName(n)
 					self.context.connect(other, defsig)
 				else:
 					self.dbg(node, REDBG, "TIE_DEFAULT", "Signal has default: %s" % n)
@@ -398,11 +379,12 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 
 	def visit_Name(self, node):
 		m = self.context
-		# Check wires first
-		if node.id in m.wires:
-			d = m.wires
+		# Try to find a wire first:
+		
+		w = m.findWireByName(node.id)
+		if w:
 			sm = SynthesisMapper(SM_WIRE)
-			sm.q = d[node.id]
+			sm.q = w
 			node.syn = sm
 		elif node.id in self.tree.vardict:
 			if node.id in self.variables:
@@ -413,6 +395,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				node.syn = sm
 				self.dbg(node, GREEN, "Init Variable", node.id)
 		else:
+			print("NOT FOUND: sig lname %s, oname: %s" % (node.obj._name, node.obj._origname))
 			if hasattr(node, "value") and isinstance(node.value, int):
 				self.dbg(node, REDBG, "possible accessing module wide variable", node.id)
 				sm = SynthesisMapper(SM_NUM)
@@ -502,10 +485,10 @@ class _ConvertAlwaysDecoVisitor(_ConvertVisitor):
 	def visit_FunctionDef(self, node, *args):
 		def handle_dff(m, stmt, clk, clkpol = True):
 			for name, sig in stmt.syn.drivers.items():
-				gsig = m.wires[name]
+				gsig = m.findWireByName(name)
 				l = gsig.size()
 				sig_ff = m.addSignal(PID(name + "_ff"), l)
-				clk = m.wires[clk._name]
+				clk = m.findWireByName(clk._name)
 				m.addDff(self.genid(node, name), clk, sig[0], sig_ff, clkpol)
 				m.connect(gsig, sig_ff)
 	
@@ -547,15 +530,15 @@ class _ConvertAlwaysSeqVisitor(_ConvertVisitor):
 
 	def visit_FunctionDef(self, node, *args):
 		def handle_dff(m, stmt, reset, clk, clkpol = True):
-			clk = m.wires[clk._name]
+			clk = m.findWireByName(clk._name)
 			for name, sig in stmt.syn.drivers.items():
-				gsig = m.wires[name]
+				gsig = m.findWireByName(name)
 				l = gsig.size()
 				sig_ff = m.addSignal(PID(name + "_ff"), l)
 				y = m.addSignal(PID(name + "_rst"), l)
 				reset_val = Signal(Const(m.defaults[name], l)) # Value when in reset
 				# Create synchronous reset circuit
-				rst = m.wires[reset._name]
+				rst = m.findWireByName(reset._name)
 				if reset.active:
 					m.addMux(self.genid(node, name + "_rst"), sig[0], reset_val, rst, y)
 				else:
@@ -566,13 +549,13 @@ class _ConvertAlwaysSeqVisitor(_ConvertVisitor):
 				m.connect(gsig, sig_ff)
 
 		def handle_adff(m, stmt, reset, clk, clkpol = True):
-			clk = m.wires[clk._name]
+			clk = m.findWireByName(clk._name)
 			for name, sig in stmt.syn.drivers.items():
-				gsig = m.wires[name]
+				gsig = m.findWireByName(name)
 				l = gsig.size()
 				sig_ff = m.addSignal(PID(name + "_ff"), l)
 				reset_val = Const(m.defaults[name], l) # Value when in reset
-				arst = m.wires[reset._name]
+				arst = m.findWireByName(reset._name)
 				m.addAdff(self.genid(node, name), clk, arst, sig[0], sig_ff, reset_val.get(), \
 					clkpol, reset.active)
 
@@ -624,7 +607,7 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 			if isinstance(stmt, ast.If):
 				for name, sig in stmt.syn.drivers.items():
 					print("wire %s:" % name)
-					gsig = m.wires[name]
+					gsig = m.findWireByName(name)
 					m.connect(gsig, sig[0])
 					self.dbg(stmt, REDBG, "DRIVERS", name)
 
@@ -673,119 +656,121 @@ def collect_generators(instance, absnames):
  
 	return genlist
 
-from itertools import chain
-
-def analyze_signals(instance):
-	sigdict = instance.sigdict
-	memdict = instance.memdict
-	siglist = []
-	memlist = []
-
-	namedict = dict(chain(sigdict.items(), memdict.items()))
-
-	for n, s in sigdict.items():
-		if s._name is not None:
-			continue
-		if isinstance(s, _SliceSignal):
-			continue
-		s._name = _makeName(n, [], namedict)
-		if not s._nrbits:
-			raise ConversionError(_error.UndefinedBitWidth, s._name)
-		# slice signals
-		for sl in s._slicesigs:
-			sl._setName(hdl)
-		siglist.append(s)
-	# list of signals
-	for n, m in memdict.items():
-		if m.name is not None:
-			continue
-		m.name = _makeName(n, [], namedict)
-		memlist.append(m)
-
-	return siglist, memlist
 
 def convert_wires(m, c, a, n):
 	if isinstance(a, _Signal):
-		if a._name not in m.wires:
-			print("## Signal %s unused" % a._name)
-		else:
-			sig = m.wires[a._name]
+		try:
+			sig = m.findWire(a)
 			if a._driven:
-				print("OUT wire", a._name)
+				print("ACTIVE wire", a._name)
 				# port.get().port_output = True
 				# s = Signal(port)
 				c.setPort(PID(n), sig)
 				# m.connect(sig, s)
-			else:
+			elif a._read:
 				port = m.addWire(None, len(a))
-				print("IN wire", a._name)
+				print("PASSIVE wire", a._name)
 				port.get().port_input = True
 				s = Signal(port)
 				c.setPort(PID(n), s)
 				m.connect(s, sig)
+			else:
+				print("FLOATING wire", a._name)
+		except KeyError:
+			print("UNDEFINED/UNUSED wire, localname: %s, origin: %s" % (a._name, a._origname))
+
 	elif isinstance(a, intbv):
+		print("CONST (vector) wire")
 		port = m.addWire(None, len(a))
 		s = Signal(port)
 		sig = ConstSignal(a, len(a))
 		c.setPort(PID(n), s)
 		m.connect(s, sig)
 	elif isinstance(a, int) or isinstance(a, bool):
+		print("CONST wire")
 		# sig = ConstSignal(a)
 		# c.setPort(PID(n), sig)
 		c.parameters[n] = a
 	elif a == None:
 		pass
 	else:
+		print("Resolve class (bus wire)")
 		for i in a.__dict__.items():
 			convert_wires(m, c, i[1], n + "_" + i[0])
 		
-def infer_handle_interface(design, instance):
+def infer_handle_interface(design, instance, parent_wires):
 	blk = instance.obj
-	blk._inferInterface()
+	infer_interface(blk)
 	# Add module with implementation (not instance) name
 	# The name is a unique key mangled from the interface
 	key = create_key(blk)
-	m = design.addModule(key)
+	m = design.addModule(key, instance)
 
 #	for i in siglist:
 #		print(i._name)
 	# print(blk.argdict)
 	argnames = inspect.signature(blk.func).parameters.keys()
 	# print("ARGS", blk.args)
-	print("ARGN", argnames)
+	# print("ARGN", argnames)
 
+	print("TOP LEVEL SIGNALS")
+	impl = blk
+	for i, n in enumerate(argnames):
+		try:
+			a = impl.args[i]
+			print(a)
+		except IndexError:
+			print(argnames)
+			print(i, impl.args)
+			# raise AssertionError
+	print("---- DONE ----")
 
+	instance.symdict = parent_wires # XXX
 	m.collectWires(instance, argnames)
 
 	return m
 
-def infer_rtl(h, instance, design):
+def infer_rtl(h, instance, design, module_signals):
 	print(GREEN + "\tInfer blackbox: '%s'" % instance.name + OFF)
-	m = infer_handle_interface(design, instance)
+	m = infer_handle_interface(design, instance, module_signals)
 	intf = BBInterface("bb_" + instance.name, m)
 	instance.obj.infer(m, intf)
-	print("WIRES")
 	# Connect wires
+	impl = instance.obj
+	print(impl.func.__name__)
+
+
+
+	print("WIRES")
+
 	for n, i in intf.interface.items():
-		sig = m.wires[n]
+		sig = m.findWireByName(n)
 		w = i.as_wire()
-		if w.port_input:
-			m.connect(i, sig)
+		# Reversed!
 		if w.port_output:
-			m.connect(sig, i)
+			print("IN: %s" % n)
+			# m.connect(i, sig)
+		if w.port_input:
+			print("OUT: %s" % n)
+			# m.connect(sig, i)
+
+#		convert_wires(m, c, a, n)
 	# z = input("--- HIT RETURN")
 
 	# infer_obj.dump()
 
 
-def convert_rtl(h, instance, design):
-	m = infer_handle_interface(design, instance)
+def convert_rtl(h, instance, design, module_signals):
+	m = infer_handle_interface(design, instance, module_signals)
 
 	m.collectMemories(instance)
 
+	print(76 * '=')
+	print("CONVERT_RTL instance '%s' " % instance.name)
+
 	# Visit generators:
 	for tree in instance.genlist:
-		print(">>>>>> '%s' " % tree.name)
+		print("CONVERT_RTL tree >>>>>> '%s' " % tree.name)
 		if tree.kind == _kind.ALWAYS:
 			Visitor = _ConvertAlwaysVisitor
 		elif tree.kind == _kind.INITIAL:
@@ -801,23 +786,35 @@ def convert_rtl(h, instance, design):
 
 		v = Visitor(m, tree)
 		v.dbg(tree, GREEN, "SYMBOLS", tree.name)
-		for sym, node  in tree.symdict.items():
-			if isinstance(node, _Signal):
-				if hasattr(node, "obj"):
-					print(sym, node.obj)
-				else:
-					print(sym, node._type)
-			else:
-				pass
-				# print(sym, type(node))
+#		for sym, node  in tree.symdict.items():
+#			if isinstance(node, _Signal):
+#				if hasattr(node, "obj"):
+#					print(sym, node.obj)
+#				else:
+#					print(sym, node._type)
+#			else:
+#				pass
+#				# print(sym, type(node))
 		v.dbg(tree, GREEN, "-------", "")
 		v.visit(tree)
+
+		print("OUTPUTS of %s" % instance.name)
+		for i in tree.outputs:
+			print("\t" + i)
+		
+		print("INPUTS")
+		for i in tree.inputs:
+			print("\t" + i)
 	
+		# z = input("##- HIT RETURN")
+
 	# Visit instances:
+	print(76 * '=')
+	print("VISIT INSTANCES") 
 	for name, inst in instance.instances:
 		key = create_key(inst)
 		impl = inst
-		impl._inferInterface()
+		infer_interface(impl)
 		print("++++++++  %s  ++++++++" % key)
 
 		c = m.addCell(ID(name), ID(key))
@@ -835,16 +832,11 @@ def convert_rtl(h, instance, design):
 			except IndexError:
 				print(argnames)
 				print(i, impl.args)
-				# raise AssertionError
-
-			# By default, a cell port is an input
-			is_output = False
+				raise AssertionError
 
 			convert_wires(m, c, a, n)
 
 def convert_hierarchy(h, func, design, trace = False):
-
-	# arglist = _flatten(h.top)
 
 	# print(arglist)
 
@@ -856,37 +848,44 @@ def convert_hierarchy(h, func, design, trace = False):
 #		v = _AnnotateTypesVisitor(tree)
 #		v.visit(tree)
 #	print(">>>>>>>>>>>>>>>>>>>")
-		
+
+	symdict = {}
+
 	for inst in h.hierarchy:
-		print("Analyze signals for", inst)
-		analyze_signals(inst)
+		print(GREEN + "========================================================" + OFF)
 		l = []
 		block_instances = []
 		for nm, elem in inst.subs:
-			if isinstance(elem, _Block):
+			if isinstance(elem, (_Block, _BlackBox)):
 				block_instances.append((nm, elem))
 			else:
 				l.append(elem)
 
-		print(GREEN + "========================================================" + OFF)
 		for m in inst.memdict.items():
 			print(GREEN + "Memory: %s" % m[0] + OFF)
-		print(GREEN + "========================================================" + OFF)
 
 		inst.instances = block_instances
-		inst.genlist = _analyzeGens(l, h.absnames)
+		inst.genlist = _analyzeGens(inst, l, h.absnames)
+		analyze_signals(inst, symdict)
+		# z = input("--- HIT RETURN")
+
+#	print("##########################")
+#	for n, s in symdict.items():
+#		print("MODULE signal '%s' : [%d]" % (n, len(s)))
+#
+#	print("##########################")
 
 	for inst in h.hierarchy:
 		print(GREEN + "========================================================" + OFF)
-		print(GREEN + "Module: '%s'" % inst.name + OFF)
+		print(GREEN + "CREATE Module: '%s'" % inst.name + OFF)
 
 		if not inst.cell:
 			infer_obj = inst.obj
 			fn = infer_obj.func
 			if isinstance(infer_obj, _BlackBox):
-				infer_rtl(h, inst, design)
+				infer_rtl(h, inst, design, symdict)
 			else:
-				convert_rtl(h, inst, design)
+				convert_rtl(h, inst, design, symdict)
 
 	top = h.hierarchy[0]
 
@@ -907,23 +906,23 @@ class YosysModuleConvertor:
 		self.design = None
 		self.trace = False
 
-	def __call__(self, func, *args, **kwargs):
+	def __call__(self, blkfunc, *args, **kwargs):
 
 		if self.name is None:
-			name = func.func.__name__
+			name = blkfunc.func.__name__
 		else:
 			name = str(self.name)
 
-		h = Hierarchy(name, func)
+		h = Hierarchy(name, blkfunc)
 
 		_genUniqueSuffix.reset()
 		_enumTypeSet.clear()
 		_slice_constDict.clear()
 		# _enumPortTypeSet = set()
 
-		func._inferInterface()
-		# dump_hierarchy(h, func)
-		top = convert_hierarchy(h, func, self.design, self.trace)
+		infer_interface(blkfunc)
+		# dump_hierarchy(h, blkfunc)
+		top = convert_hierarchy(h, blkfunc, self.design, self.trace)
 		self.design.set_top_module(top)
 
 
