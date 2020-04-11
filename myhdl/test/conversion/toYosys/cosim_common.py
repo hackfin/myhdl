@@ -44,7 +44,7 @@ def tb_unit(uut, uut_syn, async_reset):
 		reset.next = 0
 		while 1:
 			yield clk.posedge
-			# print(dout, debug, " --- ", do_syn, debug_syn)
+			print(dout, debug, " --- ", do_syn, debug_syn)
 			if dout != do_syn or debug != debug_syn:
 				yield clk.posedge
 				yield clk.posedge
@@ -73,7 +73,7 @@ def mapped_wrapper(uut, clk, ce, reset, mode, data_out, data_in):
 
 	return setupCosimulation(**locals())
 
-def run_conversion(ent, async_reset = False, wrapper = None, display = False, **kwargs):
+def design_from_entity(ent, async_reset = False, wrapper = None, **kwargs):
 	from myhdl.conversion import yshelper
 	clk = Signal(bool())
 	debug = Signal(bool(0))
@@ -100,6 +100,13 @@ def run_conversion(ent, async_reset = False, wrapper = None, display = False, **
 
 	# a.convert("verilog")
 	a.convert("yosys_module", design, name=name, trace=True)
+
+	return design
+
+def run_conversion(ent, async_reset = False, wrapper = None, display = False, **kwargs):
+
+	design = design_from_entity(ent, async_reset, wrapper, **kwargs)
+
 	top = design.top_module()
 	top_name = top.name.str()
 
@@ -108,9 +115,11 @@ def run_conversion(ent, async_reset = False, wrapper = None, display = False, **
 			mname = kwargs['display_module']
 		else:
 			mname = top_name
-		design.display_rtl(mname)
+		design.display_rtl(mname, fmt='dot')
 
+	name = ent.func.__name__
 	design.write_verilog(name, True)
+	return design
 
 def run_tb(tb, cycles = 200000):
 	tb.config_sim(backend = 'myhdl', timescale="1ps", trace=True)

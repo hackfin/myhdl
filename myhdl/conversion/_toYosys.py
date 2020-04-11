@@ -395,7 +395,6 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				node.syn = sm
 				self.dbg(node, GREEN, "Init Variable", node.id)
 		else:
-			print("NOT FOUND: sig lname %s, oname: %s" % (node.obj._name, node.obj._origname))
 			if hasattr(node, "value") and isinstance(node.value, int):
 				self.dbg(node, REDBG, "possible accessing module wide variable", node.id)
 				sm = SynthesisMapper(SM_NUM)
@@ -406,6 +405,9 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				name = NEW_ID(__name__, node, "mem")
 				sm.q = m.addSignal(name, len(mdesc.elObj))
 			else:
+				print("WIRING")
+				for n, i in m.wiring.items():
+					print(n, i)
 				raise KeyError("'%s' not in dictionary" % node.id)
 
 			node.syn = sm
@@ -530,8 +532,10 @@ class _ConvertAlwaysSeqVisitor(_ConvertVisitor):
 
 	def visit_FunctionDef(self, node, *args):
 		def handle_dff(m, stmt, reset, clk, clkpol = True):
+			print("Look for clk '%s'" % clk._name)
 			clk = m.findWireByName(clk._name)
 			for name, sig in stmt.syn.drivers.items():
+				print("\t driver '%s'" % name)
 				gsig = m.findWireByName(name)
 				l = gsig.size()
 				sig_ff = m.addSignal(PID(name + "_ff"), l)
@@ -737,25 +741,16 @@ def infer_rtl(h, instance, design, module_signals):
 	instance.obj.infer(m, intf)
 	# Connect wires
 	impl = instance.obj
-	print(impl.func.__name__)
-
-
-
-	print("WIRES")
+	# print(impl.func.__name__)
 
 	for n, i in intf.interface.items():
 		sig = m.findWireByName(n)
 		w = i.as_wire()
 		# Reversed!
 		if w.port_output:
-			print("IN: %s" % n)
-			# m.connect(i, sig)
+			m.connect(i, sig)
 		if w.port_input:
-			print("OUT: %s" % n)
-			# m.connect(sig, i)
-
-#		convert_wires(m, c, a, n)
-	# z = input("--- HIT RETURN")
+			m.connect(sig, i)
 
 	# infer_obj.dump()
 
@@ -798,7 +793,7 @@ def convert_rtl(h, instance, design, module_signals):
 		v.dbg(tree, GREEN, "-------", "")
 		v.visit(tree)
 
-		print("OUTPUTS of %s" % instance.name)
+		print("OUTPUTS of %s" % tree.name)
 		for i in tree.outputs:
 			print("\t" + i)
 		
@@ -808,7 +803,7 @@ def convert_rtl(h, instance, design, module_signals):
 	
 		# z = input("##- HIT RETURN")
 
-	# Visit instances:
+	# Create submodule instances as cells:
 	print(76 * '=')
 	print("VISIT INSTANCES") 
 	for name, inst in instance.instances:
@@ -866,7 +861,7 @@ def convert_hierarchy(h, func, design, trace = False):
 
 		inst.instances = block_instances
 		inst.genlist = _analyzeGens(inst, l, h.absnames)
-		analyze_signals(inst, symdict)
+		inst.analyze_signals(symdict)
 		# z = input("--- HIT RETURN")
 
 #	print("##########################")

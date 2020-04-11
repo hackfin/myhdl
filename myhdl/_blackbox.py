@@ -43,6 +43,8 @@ def _debug(details):
 	print("%s: %s" % (BLUEBG + msg + OFF, details))
 
 class SynthesisObject:
+	ignoreSimulation = True
+
 	def __init__(self, func):
 		self.id  = "synthesis"
 		self.func = func

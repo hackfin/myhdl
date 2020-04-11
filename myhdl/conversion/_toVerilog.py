@@ -109,7 +109,8 @@ class _ToVerilogConvertor(object):
                  "no_testbench",
                  "portmap",
                  "trace",
-                 "initial_values"
+                 "initial_values",
+                 "name_prefix"
                  )
 
     def __init__(self):
@@ -123,6 +124,7 @@ class _ToVerilogConvertor(object):
         self.no_myhdl_header = False
         self.no_testbench = False
         self.trace = False
+        self.name_prefix = ""
         self.initial_values = False
 
     def __call__(self, func, *args, **kwargs):
@@ -187,7 +189,7 @@ class _ToVerilogConvertor(object):
         else:
             intf = _analyzeTopFunc(func, *args, **kwargs)
 
-        intf.name = name
+        intf.name = self.name_prefix + name
 
         doc = _makeDoc(inspect.getdoc(func))
 

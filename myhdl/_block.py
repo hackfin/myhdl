@@ -250,6 +250,7 @@ class _Block(object):
 		def expand(parent, names, level):
 			if level > 5:
 				print("Depth exceeded")
+				# z = input("BLOCK, HIT RETURN")
 				return
 			for n, i in names.items():
 				if isinstance(i, _Signal):
@@ -259,10 +260,20 @@ class _Block(object):
 						i._origname = name
 #					else:
 #						print("Signal already has name %s" % i._origname)
+				if inspect.ismodule(i):
+					pass
+				elif isinstance(i, block):
+					pass
 				elif hasattr(i, '__dict__'):
+					# print("Container %s, type %s" % (n, type(i).__name__))
+					# for n, obj in i.__dict__.items():
+					# 	print(n, obj)
+
 					expand(n + '_', i.__dict__, level + 1)
-		print("Initializing signals for %s" % self.name)	
+		# print("Initializing signals for %s" % self.name)	
 		expand("", self.callinfo.localdict, 0)
+		# z = input("BLOCK, HIT RETURN")
+		
 		
 
 	def _updateNamespaces(self):
@@ -293,7 +304,6 @@ class _Block(object):
 #			print(n)
 #		print()
 
-		# z = input("BLOCK, HIT RETURN")
 		self.symdict.update(usedsigdict)
 		self.symdict.update(usedlosdict)
 		# Infer sigdict and memdict, with compatibility patches from _extractHierarchy
