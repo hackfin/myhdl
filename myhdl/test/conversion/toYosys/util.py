@@ -16,6 +16,7 @@ def setupCosimulationIcarus(**kwargs):
 	if path.exists(objfile):
 		os.remove(objfile)
 	analyze_cmd = ['iverilog', '-o', objfile, '%s.v' % name, '%s.v' % tbname]
+	analyze_cmd += ['techmap/cells_sim.v', '-I', 'techmap']
 	subprocess.call(analyze_cmd)
 	simulate_cmd = ['vvp', '-m', '../../../../cosimulation/icarus/myhdl.vpi']
 	simulate_cmd += [ objfile ]

@@ -665,18 +665,20 @@ def convert_wires(m, c, a, n):
 	if isinstance(a, _Signal):
 		try:
 			sig = m.findWire(a)
+			if not sig:
+				raise KeyError("Wire %s not found in signal list" % a._name)
 			if a._driven:
 				print("ACTIVE wire", a._name)
 				# port.get().port_output = True
 				# s = Signal(port)
-				c.setPort(PID(n), sig)
+				c.setPort(n, sig)
 				# m.connect(sig, s)
 			elif a._read:
 				port = m.addWire(None, len(a))
 				print("PASSIVE wire", a._name)
 				port.get().port_input = True
 				s = Signal(port)
-				c.setPort(PID(n), s)
+				c.setPort(n, s)
 				m.connect(s, sig)
 			else:
 				print("FLOATING wire", a._name)
@@ -684,17 +686,24 @@ def convert_wires(m, c, a, n):
 			print("UNDEFINED/UNUSED wire, localname: %s, origin: %s" % (a._name, a._origname))
 
 	elif isinstance(a, intbv):
-		print("CONST (vector) wire")
-		port = m.addWire(None, len(a))
+		l = len(a)
+		print("CONST (vector len %d) wire" % l)
+		port = m.addWire(None, l)
 		s = Signal(port)
-		sig = ConstSignal(a, len(a))
-		c.setPort(PID(n), s)
+		sig = ConstSignal(a, l)
+		c.setPort(n, s)
+		if (s.size() < sig.size()) or sig.size() == 0:
+			raise AssertionError("Bad signal size")
 		m.connect(s, sig)
 	elif isinstance(a, int) or isinstance(a, bool):
 		print("CONST wire")
 		# sig = ConstSignal(a)
-		# c.setPort(PID(n), sig)
-		c.parameters[n] = a
+		# c.setPort(n, sig)
+		print("WARNING: Parameter '%s' currently ignored" % n)
+		# FIXME:
+		# Parameters should only be passed on this way to
+		# black box instances
+		# c.setParam(n, a)
 	elif a == None:
 		pass
 	else:
@@ -812,7 +821,7 @@ def convert_rtl(h, instance, design, module_signals):
 		infer_interface(impl)
 		print("++++++++  %s  ++++++++" % key)
 
-		c = m.addCell(ID(name), ID(key))
+		c = m.addCell(name, key)
 		c.parameters = {}
 
 		# print(impl.argnames)
@@ -830,6 +839,7 @@ def convert_rtl(h, instance, design, module_signals):
 				raise AssertionError
 
 			convert_wires(m, c, a, n)
+	print("DONE instancing submodules")
 
 def convert_hierarchy(h, func, design, trace = False):
 

@@ -133,7 +133,7 @@ class Design:
 		ys.run_pass("write_ilang %s_mapped.il" % name, self.design)
 
 	def import_verilog(self, filename):
-		ys.run_pass("read_verilog user_xor.v", self.design)
+		ys.run_pass("read_verilog %s" % filename, self.design)
 
 	def write_verilog(self, name, rename_default = False):
 		"Write verilog"
@@ -146,6 +146,12 @@ class Design:
 			design.rename(m, ys.IdString("\\" + name))
 		ys.run_pass("write_verilog %s_mapped.v" % name, design)
 
+	def test_synth(self):
+		ys.run_pass("hierarchy -check")
+		ys.run_pass("techmap -map techmap/lutrams_map.v")
+		ys.run_pass("proc")
+
+
 class Wire:
 	"Tight wire wrapper"
 	def __init__(self, wire):
@@ -156,6 +162,11 @@ class Wire:
 
 	def __getattr__(self, name):
 		return getattr(self.wire, name)
+
+def bitfield(n):
+	l = [ys.State(int(digit)) for digit in bin(n)[2:]]
+	l.reverse()
+	return l
 
 class Const:
 	"Tight yosys Const wrapper"
@@ -169,7 +180,14 @@ class Const:
 			else:
 				self.const = ys.Const(value, bits)
 		elif isinstance(value, intbv):
-			self.const = ys.Const(int(value), len(value))
+			v = int(value)
+			l = v.bit_length() 
+			if l <= 32:
+				self.const = ys.Const(int(value), len(value))
+			else:
+				bitvector = bitfield(v)
+				print("long val %x[%d]" % (int(value), l))
+				self.const = ys.Const(bitvector)
 		elif isinstance(value, bool):
 			self.const = ys.Const(int(value), 1)
 		else:
@@ -261,6 +279,17 @@ def infer_interface(blk):
 	blk.argnames = v.argnames
 	blk.argdict = v.argdict
 
+
+class Cell:
+	"Userdefined or built-in technology cell"
+	def __init__(self, cell):
+		self.cell = cell
+
+	def setPort(self, name, port):
+		self.cell.setPort(PID(name), port)
+
+	def setParam(self, name, c):
+		self.cell.setParam(PID(name), Const(c).get())
 
 class Module:
 	"Yosys module wrapper"
@@ -379,6 +408,12 @@ class Module:
 		w = self.addWire(name, n, public)
 		return ys.SigSpec(w.get())
 
+	def addCell(self, name, celltype, builtin = False):
+		if builtin:
+			ct = PID(celltype)
+		else:
+			ct = ID(celltype)
+		return Cell(self.module.addCell(ID(name), ct))
 
 	def findWire(self, sig, local = False):
 		# TODO: Simplify, once elegant handling found
