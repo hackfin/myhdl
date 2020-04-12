@@ -1,8 +1,9 @@
 from myhdl import *
-
+from myhdl import CosimulationError
 from .cosim_common import *
 from .lfsr8 import lfsr8
 from myhdl.conversion import yshelper
+import pytest
 
 # New `blackbox` entity test cases
 #
@@ -18,6 +19,35 @@ def user_xor(A, B, Y):
 		Y.next = A ^ B
 
 	return instances()
+
+@blackbox
+def user_assert(a, b, EN):
+	"User defined assert"
+
+	q = Signal(intbv()[len(a):])
+
+	@always_comb
+	def dummy():
+		"Dummy simulation to satisfy myhdl"
+		q.next = a == b
+
+	@synthesis(yshelper.yosys)
+	def implementation(module, interface):
+		"Adds an assert cell for a == b"
+		name = interface.name
+
+		in_a = interface.addWire(a)
+		in_b = interface.addWire(b)
+		q = module.addSignal(yshelper.PID("eq"), 1)
+
+		en = yshelper.ConstSignal(EN, 1)
+
+		assert_inst = module.addEq(yshelper.ID(name + "_eq"), in_a, in_b, q)
+
+		c = module.addCell(name + "_cell", "user_assert", True)
+		c.setPort("COND", q)
+
+	return dummy, implementation
 
 @blackbox
 def xor(a, b, q):
@@ -166,6 +196,32 @@ def inst_ext_blackbox(clk, ce, reset, dout, debug):
 	return instances()
 
 @block
+def my_assert_success(clk, ce, reset, dout, debug):
+	a, b = [ Signal(modbv(0)[8:]) for i in range(2) ]
+	inst_lfsr1 = lfsr8(clk, 1, reset, 0, a)
+	inst_lfsr2 = lfsr8(clk, 1, reset, 0, b)
+
+	# Need a dummy instance to drive dout
+	inst_xor = xor(a, b, dout)
+
+	inst_assert = user_assert(a, b, 1)
+
+	return instances()
+
+@block
+def my_assert_failure(clk, ce, reset, dout, debug):
+	a, b = [ Signal(modbv(0)[8:]) for i in range(2) ]
+	inst_lfsr1 = lfsr8(clk, ce, reset, 0, a)
+	inst_lfsr2 = lfsr8(clk, 1, reset, 0, b)
+
+	# Need a dummy instance to drive dout
+	inst_xor = xor(a, b, dout)
+
+	inst_assert = user_assert(a, b, 1)
+
+	return instances()
+
+@block
 def inst_ext_parameter_blackbox(clk, ce, reset, dout, debug):
 	a, b = [ Signal(modbv(0)[8:]) for i in range(2) ]
 	inst_lfsr1 = lfsr8(clk, ce, reset, 5, a)
@@ -195,10 +251,33 @@ def test_blackbox_simple():
 	arst = False
 	design = design_from_entity(UNIT, arst)
 
-	design.write_verilog("inst_simple_blackbox", True)
-	design.display_rtl("$xor_8_8_8", fmt='ps')
+	# design.write_verilog("inst_simple_blackbox", True)
+	# design.display_rtl("$xor_8_8_8", fmt='ps')
+
+	# design.import_verilog("aux/assert.v")
 
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
+
+def test_blackbox_assert_fail():
+	"We expect a cosim error to happen, if not, assertion is flaky"
+	UNIT = my_assert_failure
+	arst = False
+	design = design_from_entity(UNIT, arst)
+
+	design.write_verilog("my_assert_failure", True)
+	try:
+		run_tb(tb_unit(UNIT, mapped_uut_assert, arst), 2000)
+	except CosimulationError:
+		pass
+
+def test_blackbox_assert():
+	UNIT = my_assert_success
+	arst = False
+	design = design_from_entity(UNIT, arst)
+
+	design.write_verilog("my_assert_success", True)
+
+	run_tb(tb_unit(UNIT, mapped_uut_assert, arst), 2000)
 
 def test_blackbox_ext():
 	UNIT = inst_ext_blackbox
@@ -217,7 +296,7 @@ def test_blackbox_ext():
  
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
-def _test_blackbox_ext_parameter():
+def test_blackbox_ext_parameter():
 	UNIT = inst_ext_parameter_blackbox
 	arst = False
 	design = design_from_entity(UNIT, arst)

@@ -64,6 +64,17 @@ def mapped_uut(which, clk, ce, reset, dout, debug):
 	return setupCosimulation(**locals())
 
 @block
+def mapped_uut_assert(which, clk, ce, reset, dout, debug):
+	args = locals()
+
+	name = which.func.__name__ + "_mapped"
+
+	tb = "tb_" + name
+	use_assert = True
+
+	return setupCosimulation(**locals())
+
+@block
 def mapped_wrapper(uut, clk, ce, reset, mode, data_out, data_in):
 	"Cosimulation object for yosys post-synthesis(mapping) verilog output"
 	args = locals()
