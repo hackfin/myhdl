@@ -139,7 +139,7 @@ def nested_hier(clk, ce, reset, dout, debug, DWIDTH = 8):
 def test_multi_inst():
 	UNIT = lfsr8_multi
 	arst = False
-	run_conversion(UNIT, arst, None, False)
+	run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
 def test_nested():
@@ -151,19 +151,19 @@ def test_nested():
 def test_class_signals():
 	UNIT = sig_classes
 	arst = False
-	run_conversion(UNIT, arst, None, False)
+	run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
 def test_class_signals_hier():
 	UNIT = sig_classes_hier
 	arst = False
-	run_conversion(UNIT, arst, None, True)
+	run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
 def Xtest_class_signals_hier_namespace():
 	UNIT = sig_classes_hier_namespace
 	arst = False
-	run_conversion(UNIT, arst, None, True)
+	run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
 

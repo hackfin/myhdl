@@ -6,7 +6,7 @@ FROM debian:buster-slim
 RUN apt-get update --allow-releaseinfo-change ; \
 	apt-get install -y make git wget bzip2 \
 	python3-distutils python3-pytest \
-	screen gnupg sudo pkg-config autoconf libtool iverilog
+	screen gnupg sudo pkg-config autoconf libtool iverilog graphviz
 
 
 RUN wget -qO - https://section5.ch/section5-apt.key | apt-key add - 

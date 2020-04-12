@@ -32,13 +32,13 @@ def const_dummy_argument(clk, ce, reset, dout, debug, test = None):
 def test_const_intbv_argument():
 	UNIT = const_intbv_argument
 	arst = False
-	run_conversion(UNIT, arst, None, True) # No wrapper, display
+	run_conversion(UNIT, arst, None, False) # No wrapper, display
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
 def test_const_num_argument():
 	UNIT = const_num_argument
 	arst = False
-	run_conversion(UNIT, arst, None, True) # No wrapper, display
+	run_conversion(UNIT, arst, None, False) # No wrapper, display
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
 def test_const_dummy_argument():

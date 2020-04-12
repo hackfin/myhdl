@@ -44,7 +44,7 @@ def tb_unit(uut, uut_syn, async_reset):
 		reset.next = 0
 		while 1:
 			yield clk.posedge
-			print(dout, debug, " --- ", do_syn, debug_syn)
+			# print(dout, debug, " --- ", do_syn, debug_syn)
 			if dout != do_syn or debug != debug_syn:
 				yield clk.posedge
 				yield clk.posedge

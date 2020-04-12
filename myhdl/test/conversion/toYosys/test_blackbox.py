@@ -217,7 +217,7 @@ def test_blackbox_ext():
  
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
-def test_blackbox_ext_parameter():
+def _test_blackbox_ext_parameter():
 	UNIT = inst_ext_parameter_blackbox
 	arst = False
 	design = design_from_entity(UNIT, arst)
