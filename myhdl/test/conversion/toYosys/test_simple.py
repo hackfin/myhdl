@@ -1,9 +1,10 @@
+# Simple entity tests for toYosys conversion
+#
 import myhdl
 from myhdl import *
-
 from .cosim_common import *
-
 from .lfsr8 import lfsr8
+import pytest
 
 @block
 def up_counter(clk, ce, reset, counter):
@@ -231,59 +232,69 @@ def lfsr8_1(clk, ce, reset, dout, debug):
 
 	return instances()
 
+@block
+def fail_elif(clk, ce, reset, dout, debug):
+	"Failing MUX case"
+	counter = Signal(modbv(0)[8:])
+	d = Signal(intbv(3)[2:])
+	@always_seq(clk.posedge, reset)
+	def worker():
+		if ce:
+			counter.next = counter + 1
+	@always_comb
+	def assign():
+		if counter == 0:
+			dout.next = 1
+		elif counter <= 15:
+			dout.next = 0
+			debug.next = 1
+
+	return instances()
+
+@block
+def simple_logic_unused_pin(clk, a_in, b_in, y_out):
+	@always_comb
+	def worker():
+		y_out.next = a_in ^ b_in
+
+	return instances()
+
+@block
+def unused_pin(clk, ce, reset, dout, debug):
+	a, b = [ Signal(intbv()[8:]) for i in range(2) ]
+
+	inst_lfsr1 = lfsr8(clk, ce, reset, 0, a)
+	inst_lfsr2 = lfsr8(clk, ce, reset, 4, b)
+
+	uut = simple_logic_unused_pin(None, a, b, dout)
+
+	return instances()
+
+
 ############################################################################
 # Tests
 
-def test_simple_expr():
+
+UUT_LIST = [ simple_expr, process_variables, module_variables,
+	simple_arith, simple_cases, simple_resize_cases, lfsr8_1, counter_extended]
+
+UUT_LIST += [ unused_pin ]
+
+UUT_UNRESOLVED_LIST = [ fail_elif ]
+
+@pytest.mark.parametrize("uut", UUT_LIST)
+def test_mapped_uut(uut):
 	arst = False
-	UNIT = simple_expr
-	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 2000)
+	run_conversion(uut, arst, None, False) # No wrapper, no display
+	run_tb(tb_unit(uut, mapped_uut, arst), 20000)
 
-def test_simple_variables():
+@pytest.mark.xfail
+@pytest.mark.parametrize("uut", UUT_UNRESOLVED_LIST)
+def test_unresolved(uut):
 	arst = False
-	UNIT = process_variables
-	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 2000)
+	run_conversion(uut, arst, None, True) # No wrapper, display
+	run_tb(tb_unit(uut, mapped_uut, arst), 20000)
 
-def test_module_variables():
-	arst = False
-	UNIT = module_variables
-	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 2000)
-
-def test_simple_arith():
-	arst = False
-	UNIT = simple_arith
-	run_conversion(UNIT, arst, False, True)
-	# run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
-
-def test_simple_cases():
-	arst = True
-	UNIT = simple_cases
-	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
-
-
-def test_simple_resize():
-	arst = True
-	UNIT = simple_resize_cases
-	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
-
-def test_lfsr():
-	UNIT = lfsr8_1
-	arst = False
-	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 2000)
-
-
-def test_counter():
-	arst = True
-	UNIT = counter_extended
-	run_conversion(UNIT, arst, False, True)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
 
 if __name__ == '__main__':
 	test_unit()

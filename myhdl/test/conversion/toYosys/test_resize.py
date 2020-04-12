@@ -7,6 +7,8 @@ from .cosim_common import *
 from myhdl import ConversionError
 from myhdl.conversion import yshelper
 
+import pytest
+
 @block
 def wrapper(uut, clk, ce, reset, mode, data_in, data_out, **kwargs):
 	"Black box for arbitrary tests with a data in and a data out port"
@@ -68,38 +70,6 @@ def tb_unit(uut, syn, async_reset, DATA_IN, DATA_IMM, MODE, DATA_OUT):
 
 	return instances()
 
-# @block
-# def tb_resize_vectors(uut, DATA_IN, DATA_IMM, MODE, DATA_OUT):
-#	data_in = Signal(modbv()[DATA_IN[1]:])
-#	data_out, data_check = [ Signal(modbv()[DATA_OUT[1]:]) for i in range(2) ]
-#	mode = Signal(t_lmode.LW)
-#	clk = Signal(bool(0))
-# 
-#	if (type(DATA_IMM) == type(1)) or DATA_IMM == None:
-#		inst_uut = uut(clk, mode, data_out, data_in, DATA_IMM)
-#	else:
-#		sig = Signal(DATA_IMM)
-# 
-#		inst_uut = uut(clk, mode, data_out, data_in, sig)
-# 
-# 
-#	@instance
-#	def stimulus():
-#		data_in.next = DATA_IN[0]
-#		data_check.next = DATA_OUT[0]
-#		mode.next = MODE
-#		clk.next = 0
-# 
-#		yield delay(10)
-#		clk.next = not clk
-#		yield delay(10)
-#		clk.next = not clk
-# 
-#		if data_out != data_check:
-#			raise ValueError("resize error, result %x" % data_out)
-# 
-#	return instances()
-
 def run_test(tb, cycles = 2000):
 	tb.config_sim(backend = 'myhdl', timescale="1ps", trace=True)
 	tb.run_sim(cycles)
@@ -116,7 +86,6 @@ def check_resize_vectors(succeed, uut, din, imm, m, dout):
 			pass
 	else:
 		assert run_test(tb_unit(uut, syn, arst, din, imm, m, dout))
-		# assert run_test(tb_resize_vectors(uut, din, imm, m, dout))
 
 
 t_lmode = t.t_lmode
@@ -169,37 +138,42 @@ RV = resize_vectors
 RVS = resize_vectors_op_sane
 RVA = t.resize_vectors_add
 RVO = t.resize_vectors_op
+RV1 = t.resize_single
 	
 CHECK_LIST0 = (
-	( True,  RV,  (0x80, 32),		None,			 t_lmode.LB,  (0xffffff80, 32) ),
-	( True,  RV,  (0x80, 32),		None,			 t_lmode.LBU, (0x00000080, 32) ),
-	( True,  RV,  (0xbeef, 32),		None,			 t_lmode.LH,  (0xffffbeef, 32) ),
-	( True,  RV,  (0xbeef, 32),		None,			 t_lmode.LHU, (0x0000beef, 32) ),
-	( True,  RV,  (0x8000beef, 32), None,			 t_lmode.LW,  (0x8000beef, 32) ),
-	( True,  RVA, (0x80, 24),		intbv(-32)[24:], t_lmode.LW,  (0xffffc1, 24) ),
-	( True,  RVA, (4, 4),	intbv(4)[4:],			 t_lmode.LW,  (9, 4) ),
-
-	( False, RVO, (0x80, 16),		0x0f0000,		 t_lmode.LW,  (0x0f0080, 24) ),
+	( True,  RV,  (0x80, 32),       None,            t_lmode.LB,  (0xffffff80, 32) ),
+	( True,  RV,  (0x80, 32),       None,            t_lmode.LBU, (0x00000080, 32) ),
+	( True,  RV,  (0xbeef, 32),     None,            t_lmode.LH,  (0xffffbeef, 32) ),
+	( True,  RV,  (0xbeef, 32),     None,            t_lmode.LHU, (0x0000beef, 32) ),
+	( True,  RV,  (0x8000beef, 32), None,            t_lmode.LW,  (0x8000beef, 32) ),
+	( True,  RVA, (0x80, 24),       intbv(-32)[24:], t_lmode.LW,  (0xffffc1, 24) ),
+	( True,  RVA, (4, 4),           intbv(4)[4:],    t_lmode.LW,  (9, 4) ),
+	( False, RVO, (0x80, 16),       0x0f0000,        t_lmode.LW,  (0x0f0080, 24) ),
+	( True,  RVS, (0x81, 16),       0x00f0f0,        t_lmode.LW,  (0x00f0f1, 24) ),
+	( True,  RV1, (0x80, 24),       32,              t_lmode.LW,  (0x0000a0, 24) ),
+	( False, RV1, (0x80, 24),       -32,             t_lmode.LW,  (0xffffe0, 24) ),
+	# This one might be still broken in the toVHDL legacy convertor
+	( True,  RVS, (0x80, 16),       0x008000,        t_lmode.LH,  (0x008080, 24) ),
 )
 
 # Test cases that are not expected to be completely sane
 CHECK_LIST1 = (
 	# We expect this one to fail, we don't want implicit truncation
-	( False,  RVS, (0x80, 32),		 0x0f0000,		  t_lmode.LW,  (0x000080, 16) ),
+	( False,  RVS, (0x80, 32),		 0x0f0000,		 t_lmode.LW,  (0x000080, 16) ),
 
 )
 
-def test_resize_vectors_ok():
-	for succeed, uut, din, imm, m, dout in CHECK_LIST0:
-		run_conversion(uut, False, wrapper, IMM = imm, MODE = m, DATA_IN = din, DATA_OUT = dout)
-		check_resize_vectors(succeed, uut, din, imm, m, dout)
+@pytest.mark.parametrize("succeed, uut, din, imm, m, dout", CHECK_LIST0)
+def test_resize_vectors_ok(succeed, uut, din, imm, m, dout):
+	run_conversion(uut, False, wrapper, IMM = imm, MODE = m, DATA_IN = din, DATA_OUT = dout)
+	check_resize_vectors(succeed, uut, din, imm, m, dout)
 
-def test_resize_vectors():
-	for succeed, uut, din, imm, m, dout in CHECK_LIST1:
-		try:
-			run_conversion(uut, False, wrapper, IMM = imm, MODE = m, DATA_IN = din, DATA_OUT = dout,
-				display_module="$resize_vectors_add_1_3_24_24_8")
-			check_resize_vectors(succeed, uut, din, imm, m, dout)
-		except ConversionError:
-			pass
+@pytest.mark.parametrize("succeed, uut, din, imm, m, dout", CHECK_LIST1)
+def test_resize_vectors_must_fail(succeed, uut, din, imm, m, dout):
+	try:
+		run_conversion(uut, False, wrapper, IMM = imm, MODE = m, DATA_IN = din, DATA_OUT = dout,
+			display_module="$resize_vectors_add_1_3_24_24_8")
+		check_resize_vectors(succeed, uut, din, imm, m, dout)
+	except ConversionError:
+		pass
 

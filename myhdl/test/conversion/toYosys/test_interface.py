@@ -5,6 +5,7 @@ from myhdl import *
 
 from .cosim_common import *
 from .lfsr8 import lfsr8
+import pytest
 
 @block
 def const_intbv_argument(clk, ce, reset, dout, debug):
@@ -29,21 +30,11 @@ def const_dummy_argument(clk, ce, reset, dout, debug, test = None):
 
 # TODO: HLS Class cases
 
-def test_const_intbv_argument():
-	UNIT = const_intbv_argument
-	arst = False
-	run_conversion(UNIT, arst, None, False) # No wrapper, display
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
+UUT_LIST = [ const_intbv_argument, const_num_argument, const_dummy_argument ]
 
-def test_const_num_argument():
-	UNIT = const_num_argument
+@pytest.mark.parametrize("uut", UUT_LIST)
+def test_mapped_uut(uut):
 	arst = False
-	run_conversion(UNIT, arst, None, False) # No wrapper, display
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
-
-def test_const_dummy_argument():
-	UNIT = const_dummy_argument
-	arst = False
-	run_conversion(UNIT, arst, None, False) # No wrapper, display
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
+	run_conversion(uut, arst, None, False) # No wrapper, display
+	run_tb(tb_unit(uut, mapped_uut, arst), 20000)
 
