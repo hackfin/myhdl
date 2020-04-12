@@ -249,7 +249,7 @@ class _Block(object):
 		"Hack to pre-init names of local block-context declared signals"
 		def expand(parent, names, level):
 			if level > 5:
-				print("Depth exceeded")
+				# print("Depth exceeded")
 				# z = input("BLOCK, HIT RETURN")
 				return
 			for n, i in names.items():

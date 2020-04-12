@@ -7,6 +7,7 @@ import inspect
 
 from myhdl import intbv
 from myhdl._enum import EnumType, EnumItemType
+from myhdl import ConversionError
 
 from myhdl._util import _makeAST
 from myhdl.conversion.analyze_ng import _AnalyzeTopFuncVisitor, _makeName
@@ -16,7 +17,7 @@ from myhdl._blackbox import _BlackBox
 from myhdl import intbv, EnumType, EnumItemType
 from myhdl._ShadowSignal import _ShadowSignal, _SliceSignal, _TristateDriver
 
-from myhdl.conversion._misc import (_get_argnames)
+from myhdl.conversion._misc import (_get_argnames, _error)
 
 from pyosys import libyosys as ys
 
@@ -35,10 +36,11 @@ S_NEUTRAL, S_COLLECT, S_MUX , S_TIE_DEFAULTS = range(4)
 
 
 class DebugOutput:
+	debug = False
 	def dbg(self, node, kind, msg = "DBG", details = "MARK"):
 		lineno = self.getLineNo(node)
 		lineno += self.tree.lineoffset
-		if kind == REDBG:
+		if kind == REDBG or self.debug:
 			print("%s: %s:%d %s" % (kind + msg + OFF, self.tree.sourcefile, lineno, details))
 
 class Synth_Nosupp(Exception):
@@ -364,7 +366,6 @@ class Module:
 
 		f, ext = self._opmap[type(op)]
 		# print(op)
-		# z = input("HIT RETURN")
 
 		sm = SynthesisMapper(SM_WIRE)
 
@@ -386,6 +387,11 @@ class Module:
 
 	def apply_unop(self, name, op, a, q):
 		self._opmap[type(op)][0](self.module, name, a, q)
+
+	def connect(self, dst, src):
+		if dst.size() != src.size():
+			raise ValueError("Signals '%s' and '%s' don't have the same size" % (dst.as_wire().name, src.as_wire().name))
+		return self.module.connect(dst, src)
 
 	def addWire(self, name, n, public=False):
 		# print(type(name))
@@ -569,7 +575,6 @@ class Module:
 				initvalues[n] = s._init
 
 		
-		# z = input("HIT RETURN")
 		self.module.fixup_ports()
 
 	def collectMemories(self, instance):
@@ -686,7 +691,7 @@ class Instance:
 		self.cell = False
 
 	def __repr__(self):
-		return self.name
+		return "< Instance %s >" % self.name
 
 	def dump(self):
 		print("===== DUMP SIGNALS, INSTANCE  %s =====" % self.name)
@@ -820,14 +825,16 @@ differing instances of the same architecture"""
 			else:
 				self.users[key] = [ inst ]
 
-			for inst in modinst.subs:
-				self._getHierarchyHelper(level + 1, inst, hierarchy)
+			for i in modinst.subs:
+				self._getHierarchyHelper(level + 1, i, hierarchy)
+
 
 	def __init__(self, name, modinst):
 		self.top = modinst
 		self.hierarchy = hierarchy = []
 		self.absnames = absnames = {}
 		self.users = {}
+		self.instdict = {}
 		self._getHierarchyHelper(1, modinst, hierarchy)
 		# compatibility with _extractHierarchy
 		# walk the hierarchy to define relative and absolute names
@@ -898,10 +905,8 @@ Used for separation of common functionality of visitor classes"""
 		self.visit(node.value)
 		node.obj = self.getObj(node.value)
 		if hasattr(node.value, "syn"):
-			self.dbg(node, BLUEBG, "MAYBE RAM ASSIGN ",  "obj: " + repr(node.value))
+			self.dbg(node, BLUEBG, "PASS ON ASSIGN ",  "obj: " + repr(node.value))
 			node.syn = node.value.syn # pass on
-
-		
 
 	def getAttr(self, node):
 		if isinstance(node.value, ast.Subscript):
@@ -1029,7 +1034,13 @@ Used for separation of common functionality of visitor classes"""
 			self.visit(stmt)
 			if isinstance(stmt, ast.If):
 				func(m, stmt, clk, clkpol)
-			# Special treatmemt for memory port without condition:
+			elif isinstance(stmt, ast.Assign):
+				lhs = stmt.targets[0]
+				n = lhs.obj._name
+				# Ugly: ad-hoc insert drivers:
+				stmt.syn.drivers = { n : [stmt.syn.q, None] }
+				func(m, stmt, clk, clkpol)
+			# Special treatment for memory port without condition:
 			# Wire EN pins to True
 			elif stmt.syn.el_type == SM_MEMPORT:
 				cc = m.addSignal(None, 0)
@@ -1039,8 +1050,7 @@ Used for separation of common functionality of visitor classes"""
 					cc.append(c)
 				m.connect(en_sig, cc)
 			else:
-				self.dbg(stmt, GREEN, "HANDLE OTHER", stmt)
-#				z = input("HIT RETURN")
+				self.dbg(stmt, REDBG, "HANDLE OTHER", stmt)
 
 	def handle_mux_statement(self, cond, stmt, casemap):
 		"Handle multiplexer case"
@@ -1262,6 +1272,55 @@ Used for separation of common functionality of visitor classes"""
 		sm.drivers = muxmap
 
 		node.syn = sm
+
+	def handle_toplevel_assignment(self, stmt):
+		"Auxiliary for signal wiring"
+
+
+		lhs = stmt.targets[0]
+		rhs = stmt.value
+
+		m = self.context
+		sig = lhs.obj 
+		name = sig._name
+		oname = sig._origname
+		if oname:
+			# Do we have an active wiring for the original name?
+			if oname in m.wiring:
+				# print("WIRING", m.wiring[oname])
+				portname = m.wiring[oname][0]
+				outsig = m.findWireByName(name)
+				signame = outsig.as_wire().name
+				self.dbg(stmt, GREEN, "PORT ASSIGN", "PORT local: '%s', port: '%s', sig: %s" % (name, portname, signame))
+				dst, src = (outsig, rhs.syn.q)
+			else:
+				# Try find a locally declared signal:
+				outsig = m.findWireByName(name)
+				if outsig:
+					dst, src = (outsig, rhs.syn.q)
+				else:
+					self.dbg(stmt, REDBG, "UNCONNECTED", "PORT local: '%s', orig: '%s'" % (name, oname))
+					raise AssertionError
+		else:
+			outsig = m.findWireByName(name)
+			signame = outsig.as_wire().name
+			self.dbg(stmt, REDBG, "SIGNAL local: '%s', %s" % (name, signame))
+			# Simply connect RHS to LHS:
+			dst, src = (outsig, rhs.syn.q)
+
+		# Size handling and sign extension:
+		if dst.size() > src.size():
+			self.dbg(stmt, REDBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
+			src.extend_u0(dst.size(), rhs.syn.is_signed)
+		elif dst.size() < src.size():
+			if rhs.syn.carry:
+				self.dbg(stmt, REDBG, "TRUNC", "Implicit carry truncate: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
+				src = src.extract(0, dst.size())
+			else:
+				self.raiseError(stmt, "OVERFLOW const value: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
+
+
+		m.connect(dst, src)
 
 
 ############################################################################

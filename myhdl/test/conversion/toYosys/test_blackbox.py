@@ -62,7 +62,7 @@ def ext_xor(a, b, q):
 		c.setPort("B", in_b)
 		c.setPort("Y", out_q)
 
-		# module.fixup_ports()
+		module.fixup_ports()
 
 	return simulation, implementation
 

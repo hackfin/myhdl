@@ -231,13 +231,8 @@ def lfsr8_1(clk, ce, reset, dout, debug):
 
 	return instances()
 
-
-def test_counter():
-	arst = True
-	UNIT = counter_extended
-	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
-
+############################################################################
+# Tests
 
 def test_simple_expr():
 	arst = False
@@ -260,9 +255,9 @@ def test_module_variables():
 def test_simple_arith():
 	arst = False
 	UNIT = simple_arith
-	run_conversion(UNIT, arst)
+	run_conversion(UNIT, arst, False, True)
+	# run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
-
 
 def test_simple_cases():
 	arst = True
@@ -282,6 +277,13 @@ def test_lfsr():
 	arst = False
 	run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 2000)
+
+
+def test_counter():
+	arst = True
+	UNIT = counter_extended
+	run_conversion(UNIT, arst, False, True)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
 
 if __name__ == '__main__':
 	test_unit()

@@ -2,6 +2,7 @@ from myhdl import *
 
 from .cosim_common import *
 from .lfsr8 import lfsr8
+from .test_simple import up_counter
 
 @block
 def simple_logic_comb(a_in, b_in, y_out):
@@ -30,6 +31,7 @@ def lfsr8_multi(clk, ce, reset, dout, debug):
 
 	inst_lfsr_ce = lfsr8(clk, ce, reset, 0, lq3)
 
+	ctr = up_counter(clk, ce, reset, counter)
 
 	@always_seq(clk.posedge, reset)
 	def assign():
@@ -44,13 +46,56 @@ def lfsr8_multi(clk, ce, reset, dout, debug):
 
 class Bus:
 	def __init__(self, AWIDTH = 8, DWIDTH = 8):
-		self.en = Signal(bool)
+		self.en = Signal(bool())
 		self.addr = Signal(modbv()[AWIDTH:])
 		self.data = Signal(modbv()[DWIDTH:])
 
 @block
+def simple_lut(clk, bus):
+	@always(clk.posedge)
+	def worker():
+		if bus.en:
+			bus.data.next = bus.addr ^ 0xaa
+
+	return instances()
+
+@block
 def sig_classes(clk, ce, reset, dout, debug):
+	"Case: Signals are wired explicitely"
+	mem0, mem1 = [ Bus(8, 8) for i in range(2) ]
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+	inst_mem = simple_lut(clk, mem0)
+
+	@always_comb
+	def assign():
+		dout.next = mem0.data
+		mem0.en.next = ce
+		mem0.addr.next = counter
+
+	return instances()
+
+@block
+def sig_classes_hier(clk, ce, reset, dout, debug):
 	"Case: submodule is driver"
+	b = Bus(8, 8)
+	
+	o, p = [ Signal(intbv()[8:]) for i in range(2) ]
+	q = Signal(intbv()[8:])
+
+	inst_lfsr2 = lfsr8(clk, ce, reset, 2, b.data)
+	inst_lfsr1 = lfsr8(clk, True, reset, 0, b.addr)
+	# BUG: b.data/b.addr not resolved, falls back to parent 'dout'
+	inst_logic = simple_logic_comb(o, p, dout)
+
+
+	return instances()
+
+
+@block
+def sig_classes_hier_namespace(clk, ce, reset, dout, debug):
+	"Make sure name space does not collide"
 	b = Bus(8, 8)
 
 	inst_lfsr2 = lfsr8(clk, ce, reset, 2, b.addr)
@@ -59,6 +104,17 @@ def sig_classes(clk, ce, reset, dout, debug):
 	inst_logic = simple_logic(clk, b.addr, b.data, dout)
 
 	return instances()
+
+
+@block
+def complex_logic(clk, a, b, y_out):
+	@always(clk.posedge)
+	def worker():
+		y_out.next = a.addr ^ b.addr ^ a.data ^ b.data
+
+	return instances()
+
+
 
 @block
 def wrapper(clk, ce, reset, rval, out):
@@ -83,19 +139,31 @@ def nested_hier(clk, ce, reset, dout, debug, DWIDTH = 8):
 def test_multi_inst():
 	UNIT = lfsr8_multi
 	arst = False
-	run_conversion(UNIT, arst, None, True)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 200)
-
-def test_class_signals():
-	UNIT = sig_classes
-	arst = False
 	run_conversion(UNIT, arst, None, False)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 200)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
 def test_nested():
 	UNIT = nested_hier
 	arst = False
 	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 200)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
+
+def test_class_signals():
+	UNIT = sig_classes
+	arst = False
+	run_conversion(UNIT, arst, None, False)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
+
+def test_class_signals_hier():
+	UNIT = sig_classes_hier
+	arst = False
+	run_conversion(UNIT, arst, None, True)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
+
+def Xtest_class_signals_hier_namespace():
+	UNIT = sig_classes_hier_namespace
+	arst = False
+	run_conversion(UNIT, arst, None, True)
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
 

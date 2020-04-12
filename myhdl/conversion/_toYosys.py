@@ -144,7 +144,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			drvname = lhs.obj._name # Default driver name
 			if hasattr(lhs, "syn"):
 				# We already have an assigned port
-				self.dbg(node, BLUEBG, "ASSIGN", "assign to preassigned Port type %s" % (type(lhs)))
+				self.dbg(node, BLUEBG, "ASSIGN", "assign '%s' to preassigned Port %s" % (drvname, lhs.obj._origname))
 				dst = lhs.syn.q
 				# Special case: detect memory cell read/write:
 				if lhs.syn.el_type == SM_MEMPORT:
@@ -166,9 +166,10 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 					pass
 				# FIXME: We might eliminate extra BUF drivers
 			else:
-				self.dbg(node, BLUEBG, "ASSIGN", "assign to Signal type %s" % (type(lhs.obj)))
+				self.dbg(node, BLUEBG, "ASSIGN", "assign '%s' to Signal type %s" % (drvname, type(lhs.obj)))
 				dst = self.findWire(lhs)
 
+			# FIXME: Redundancies with deferred size fixups, see handle_toplevel_assignment()
 			# Size handling and sign extension:
 			if dst.size() > src.size():
 				self.dbg(node, REDBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
@@ -186,12 +187,6 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		if not sm:
 			sm = SynthesisMapper(t)
 			sm.q = src
-
-		if self.state == S_MUX:
-			node.driver = drvname
-		elif dst:
-			m = self.context
-			m.connect(dst, src)
 
 		node.syn = sm
 
@@ -453,6 +448,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			self.visit(stmt)
 
 
+
 class _ConvertAlwaysVisitor(_ConvertVisitor):
 	def __init__(self, context, tree):
 		_ConvertVisitor.__init__(self, context, tree)
@@ -477,7 +473,20 @@ class _ConvertSimpleAlwaysCombVisitor(_ConvertVisitor):
 
 	def visit_FunctionDef(self, node, *args):
 		self.cur_module = node.name
-		self.visit_stmt(node.body)
+
+		for stmt in node.body:
+			self.dbg(stmt, GREEN, "STMT", stmt)
+			self.visit(stmt)
+			if isinstance(stmt, ast.If):
+				raise AssertionError
+			elif isinstance(stmt, ast.Assign):
+				lhs = stmt.targets[0]
+				if isinstance(lhs, ast.Name):
+					pass
+				elif isinstance(lhs.obj, _Signal):
+					self.handle_toplevel_assignment(stmt)				
+			else:
+				raise AssertionError
 
 class _ConvertAlwaysDecoVisitor(_ConvertVisitor):
 	"""Visitor for @always(sens_signal) type modules"""
@@ -614,6 +623,16 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 					gsig = m.findWireByName(name)
 					m.connect(gsig, sig[0])
 					self.dbg(stmt, REDBG, "DRIVERS", name)
+			elif isinstance(stmt, ast.Assign):
+				lhs = stmt.targets[0]
+				# Variable assignments are handled inline
+				if isinstance(lhs, ast.Name):
+					pass
+				elif isinstance(lhs.obj, _Signal):
+					self.handle_toplevel_assignment(stmt)				
+				else:
+					self.dbg(stmt, REDBG, "UNHANDLED ASSIGN", type(lhs))
+					raise AssertionError
 
 	def visit_If(self, node):
 		"always_comb If"
@@ -668,14 +687,14 @@ def convert_wires(m, c, a, n):
 			if not sig:
 				raise KeyError("Wire %s not found in signal list" % a._name)
 			if a._driven:
-				print("ACTIVE wire", a._name)
+				print("ACTIVE wire %s -> %s" % (a._name, n))
 				# port.get().port_output = True
 				# s = Signal(port)
 				c.setPort(n, sig)
 				# m.connect(sig, s)
 			elif a._read:
 				port = m.addWire(None, len(a))
-				print("PASSIVE wire", a._name)
+				print("PASSIVE wire %s <- %s" % (a._name, n))
 				port.get().port_input = True
 				s = Signal(port)
 				c.setPort(n, s)
@@ -685,6 +704,7 @@ def convert_wires(m, c, a, n):
 		except KeyError:
 			print("UNDEFINED/UNUSED wire, localname: %s, origin: %s" % (a._name, a._origname))
 
+		# z = input("##- HIT RETURN")
 	elif isinstance(a, intbv):
 		l = len(a)
 		print("CONST (vector len %d) wire" % l)
@@ -699,7 +719,7 @@ def convert_wires(m, c, a, n):
 		print("CONST wire")
 		# sig = ConstSignal(a)
 		# c.setPort(n, sig)
-		print("WARNING: Parameter '%s' currently ignored" % n)
+		print("WARNING: Parameter '%s' handled as constant signal" % n)
 		# FIXME:
 		# Parameters should only be passed on this way to
 		# black box instances
@@ -763,6 +783,29 @@ def infer_rtl(h, instance, design, module_signals):
 
 	# infer_obj.dump()
 
+def wireup(m, c, inst):
+
+	for n, i in inst.wiring.items():
+		print("WIRE", n, i[0], i[1])
+		a = i[1]
+		sig = m.findWireByName(n)
+		if not sig:
+			raise ValueError("%s not found" % i[0])
+		if a._driven:
+			print("ACTIVE wire %s -> %s" % (a._name, n))
+			# port.get().port_output = True
+			# s = Signal(port)
+			c.setPort(n, sig)
+			# m.connect(sig, s)
+		elif a._read:
+			port = m.addWire(None, len(a))
+			print("PASSIVE wire %s <- %s" % (a._name, n))
+			port.get().port_input = True
+			s = Signal(port)
+			c.setPort(n, s)
+			m.connect(s, sig)
+
+	# z = input("##- HIT RETURN")
 
 def convert_rtl(h, instance, design, module_signals):
 	m = infer_handle_interface(design, instance, module_signals)
@@ -822,13 +865,13 @@ def convert_rtl(h, instance, design, module_signals):
 		print("++++++++  %s  ++++++++" % key)
 
 		c = m.addCell(name, key)
-		c.parameters = {}
-
 		# print(impl.argnames)
+
+		inst_decl = h.instdict[name]
+#		wireup(m, c, inst_decl)
 
 		# Grab implementation function argument names
 		argnames = inspect.signature(impl.func).parameters.keys()
-
 
 		for i, n in enumerate(argnames):
 			try:
@@ -837,6 +880,8 @@ def convert_rtl(h, instance, design, module_signals):
 				print(argnames)
 				print(i, impl.args)
 				raise AssertionError
+
+			# z = input("--- HIT RETURN")
 
 			convert_wires(m, c, a, n)
 	print("DONE instancing submodules")
@@ -870,9 +915,16 @@ def convert_hierarchy(h, func, design, trace = False):
 			print(GREEN + "Memory: %s" % m[0] + OFF)
 
 		inst.instances = block_instances
+
+		# Insert instance id name into hierarchy's instance dict:
+		if not inst.name in h.instdict:
+			h.instdict[inst.name] = inst
+		else:
+			print(REDBG + "Instance %s not found" % inst.name + OFF)
+
 		inst.genlist = _analyzeGens(inst, l, h.absnames)
 		inst.analyze_signals(symdict)
-		# z = input("--- HIT RETURN")
+
 
 #	print("##########################")
 #	for n, s in symdict.items():
