@@ -1,3 +1,5 @@
+# Hierarchy checks for toYosys synthesis output
+#
 from myhdl import *
 
 from .cosim_common import *
@@ -133,34 +135,23 @@ def nested_hier(clk, ce, reset, dout, debug, DWIDTH = 8):
 
 	return instances()
 
-def test_multi_inst():
-	UNIT = lfsr8_multi
-	arst = False
-	run_conversion(UNIT, arst, None, False)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
-def test_nested():
-	UNIT = nested_hier
-	arst = False
-	run_conversion(UNIT, arst)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
+UUT_LIST = [ lfsr8_multi, nested_hier, sig_classes, sig_classes_hier ]
 
-def test_class_signals():
-	UNIT = sig_classes
-	arst = False
-	run_conversion(UNIT, arst, None, False)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
+# Unresolved cases
+UUT_LIST_UNRESOLVED = [ sig_classes_hier_namespace ]
 
-def test_class_signals_hier():
-	UNIT = sig_classes_hier
+
+@pytest.mark.parametrize("uut", UUT_LIST)
+def test_mapped_uut(uut):
 	arst = False
-	run_conversion(UNIT, arst, None, True)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
+	run_conversion(uut, arst, None, False) # No wrapper, no display
+	run_tb(tb_unit(uut, mapped_uut, arst), 20000)
 
 @pytest.mark.xfail
-def test_class_signals_hier_namespace():
-	UNIT = sig_classes_hier_namespace
+@pytest.mark.parametrize("uut", UUT_LIST_UNRESOLVED)
+def test_unresolved(uut):
 	arst = False
-	run_conversion(UNIT, arst, None, True)
-	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
+	run_conversion(uut, arst, None, False) # No wrapper, no display
+	run_tb(tb_unit(uut, mapped_uut, arst), 20000)
 

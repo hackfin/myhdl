@@ -7,6 +7,8 @@ from .cosim_common import *
 from myhdl import ConversionError
 from myhdl.conversion import yshelper
 
+import pytest
+
 @block
 def wrapper(uut, clk, ce, reset, mode, data_in, data_out, **kwargs):
 	"Black box for arbitrary tests with a data in and a data out port"
@@ -150,7 +152,7 @@ CHECK_LIST0 = (
 	( True,  RVS, (0x81, 16),       0x00f0f0,        t_lmode.LW,  (0x00f0f1, 24) ),
 	( True,  RV1, (0x80, 24),       32,              t_lmode.LW,  (0x0000a0, 24) ),
 	( False, RV1, (0x80, 24),       -32,             t_lmode.LW,  (0xffffe0, 24) ),
-	# This one might be still broken in the upstream toVHDL legacy convertor
+	# This one might be still broken in the toVHDL legacy convertor
 	( True,  RVS, (0x80, 16),       0x008000,        t_lmode.LH,  (0x008080, 24) ),
 )
 
@@ -161,17 +163,17 @@ CHECK_LIST1 = (
 
 )
 
-def test_resize_vectors_ok():
-	for succeed, uut, din, imm, m, dout in CHECK_LIST0:
-		run_conversion(uut, False, wrapper, IMM = imm, MODE = m, DATA_IN = din, DATA_OUT = dout)
-		check_resize_vectors(succeed, uut, din, imm, m, dout)
+@pytest.mark.parametrize("succeed, uut, din, imm, m, dout", CHECK_LIST0)
+def test_resize_vectors_ok(succeed, uut, din, imm, m, dout):
+	run_conversion(uut, False, wrapper, IMM = imm, MODE = m, DATA_IN = din, DATA_OUT = dout)
+	check_resize_vectors(succeed, uut, din, imm, m, dout)
 
-def test_resize_vectors_must_fail():
-	for succeed, uut, din, imm, m, dout in CHECK_LIST1:
-		try:
-			run_conversion(uut, False, wrapper, IMM = imm, MODE = m, DATA_IN = din, DATA_OUT = dout,
-				display_module="$resize_vectors_add_1_3_24_24_8")
-			check_resize_vectors(succeed, uut, din, imm, m, dout)
-		except ConversionError:
-			pass
+@pytest.mark.parametrize("succeed, uut, din, imm, m, dout", CHECK_LIST1)
+def test_resize_vectors_must_fail(succeed, uut, din, imm, m, dout):
+	try:
+		run_conversion(uut, False, wrapper, IMM = imm, MODE = m, DATA_IN = din, DATA_OUT = dout,
+			display_module="$resize_vectors_add_1_3_24_24_8")
+		check_resize_vectors(succeed, uut, din, imm, m, dout)
+	except ConversionError:
+		pass
 
