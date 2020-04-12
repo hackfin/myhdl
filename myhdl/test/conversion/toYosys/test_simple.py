@@ -265,7 +265,6 @@ def test_simple_cases():
 	run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 22000)
 
-
 def test_simple_resize():
 	arst = True
 	UNIT = simple_resize_cases
@@ -277,7 +276,6 @@ def test_lfsr():
 	arst = False
 	run_conversion(UNIT, arst)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 2000)
-
 
 def test_counter():
 	arst = True

@@ -4,6 +4,8 @@ from .cosim_common import *
 from .lfsr8 import lfsr8
 from .test_simple import up_counter
 
+import pytest
+
 @block
 def simple_logic_comb(a_in, b_in, y_out):
 	@always_comb
@@ -89,9 +91,7 @@ def sig_classes_hier(clk, ce, reset, dout, debug):
 	# BUG: b.data/b.addr not resolved, falls back to parent 'dout'
 	inst_logic = simple_logic_comb(o, p, dout)
 
-
 	return instances()
-
 
 @block
 def sig_classes_hier_namespace(clk, ce, reset, dout, debug):
@@ -105,7 +105,6 @@ def sig_classes_hier_namespace(clk, ce, reset, dout, debug):
 
 	return instances()
 
-
 @block
 def complex_logic(clk, a, b, y_out):
 	@always(clk.posedge)
@@ -113,8 +112,6 @@ def complex_logic(clk, a, b, y_out):
 		y_out.next = a.addr ^ b.addr ^ a.data ^ b.data
 
 	return instances()
-
-
 
 @block
 def wrapper(clk, ce, reset, rval, out):
@@ -160,10 +157,10 @@ def test_class_signals_hier():
 	run_conversion(UNIT, arst, None, True)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
-def Xtest_class_signals_hier_namespace():
+@pytest.mark.xfail
+def test_class_signals_hier_namespace():
 	UNIT = sig_classes_hier_namespace
 	arst = False
 	run_conversion(UNIT, arst, None, True)
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
-
 
