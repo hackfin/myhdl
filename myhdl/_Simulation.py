@@ -255,6 +255,8 @@ def _makeWaiters(arglist):
             waiters.append(_SignalTupleWaiter(arg._waiter()))
         elif isinstance(arg, _Waiter):
             waiters.append(arg)
+        elif hasattr(arg, 'ignoreSimulation'):
+            pass
         elif arg == True:
             pass
         else:

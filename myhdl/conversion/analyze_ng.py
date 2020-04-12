@@ -139,7 +139,7 @@ def _analyzeSigs(hierarchy, hdl='Verilog'):
     return siglist, memlist
 
 
-def _analyzeGens(top, absnames):
+def _analyzeGens(inst, top, absnames):
     genlist = []
     for g in top:
         if isinstance(g, _UserCode):
@@ -147,6 +147,7 @@ def _analyzeGens(top, absnames):
         elif isinstance(g, (_AlwaysComb, _AlwaysSeq, _Always)):
             f = g.func
             tree = g.ast
+            tree.parent = inst
             tree.symdict = f.__globals__.copy()
             tree.callstack = []
             # handle free variables
@@ -838,11 +839,11 @@ class _AnalyzeVisitor(ast.NodeVisitor, _ConversionMixin):
             node.obj = sig = self.tree.sigdict[n]
             # mark shadow signal as driven only when they are seen somewhere
             if isinstance(sig, _ShadowSignal):
-                sig._source = self.tree
+                sig._source = self.tree.parent
                 sig._driven = 'wire'
             # mark tristate signal as driven if its driver is seen somewhere
             if isinstance(sig, _TristateDriver):
-                sig._source = self.tree
+                sig._source = self.tree.parent
                 sig._sig._driven = 'wire'
             if not isinstance(sig, _Signal):
                 # print "not a signal: %s" % n
@@ -1085,7 +1086,7 @@ class _AnalyzeBlockVisitor(_AnalyzeVisitor):
             s = self.tree.sigdict[n]
             if s._driven:
                 self.raiseError(node, _error.SigMultipleDriven, n)
-            s._source = self.tree
+            s._source = self.tree.parent
             s._driven = "reg"
         for n in self.tree.inputs:
             s = self.tree.sigdict[n]
@@ -1134,11 +1135,11 @@ class _AnalyzeAlwaysCombVisitor(_AnalyzeBlockVisitor):
         if self.tree.kind == _kind.SIMPLE_ALWAYS_COMB:
             for n in self.tree.outputs:
                 s = self.tree.sigdict[n]
-                s._source = self.tree
+                s._source = self.tree.parent
                 s._driven = "wire"
             for n in self.tree.outmems:
                 m = _getMemInfo(self.tree.symdict[n])
-                m._source = self.tree
+                m._source = self.tree.parent
                 m._driven = "wire"
 
 

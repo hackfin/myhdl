@@ -122,7 +122,7 @@ class _Signal(object):
                  '_eventWaiters', '_posedgeWaiters', '_negedgeWaiters',
                  '_code', '_tracing', '_nrbits', '_checkVal',
                  '_setNextVal', '_copyVal2Next', '_printVcd',
-                 '_driven', '_read', '_name', '_used', '_inList',
+                 '_driven', '_read', '_name', '_origname', '_source', '_used', '_inList',
                  '_waiter', 'toVHDL', 'toVerilog', '_slicesigs',
                  '_numeric'
                  )
@@ -138,6 +138,11 @@ class _Signal(object):
         self._next = deepcopy(val)
         self._min = self._max = None
         self._name = self._driven = None
+		# Original name from top when not driven
+		# Initialized in @block only.
+        self._origname = None
+		# Driver source:
+        self._source = None
         self._read = self._used = False
         self._inList = False
         self._nrbits = 0
