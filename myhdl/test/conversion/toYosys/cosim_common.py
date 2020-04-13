@@ -55,8 +55,6 @@ def tb_unit(uut, uut_syn, async_reset):
 
 @block
 def mapped_uut(which, clk, ce, reset, dout, debug):
-	args = locals()
-
 	name = which.func.__name__ + "_mapped"
 
 	tb = "tb_" + name
@@ -65,8 +63,6 @@ def mapped_uut(which, clk, ce, reset, dout, debug):
 
 @block
 def mapped_uut_assert(which, clk, ce, reset, dout, debug):
-	args = locals()
-
 	name = which.func.__name__ + "_mapped"
 
 	tb = "tb_" + name
@@ -77,8 +73,6 @@ def mapped_uut_assert(which, clk, ce, reset, dout, debug):
 @block
 def mapped_wrapper(uut, clk, ce, reset, mode, data_out, data_in):
 	"Cosimulation object for yosys post-synthesis(mapping) verilog output"
-	args = locals()
-
 	name = uut.__name__ + "_mapped"
 	tb = "tb_" + name
 

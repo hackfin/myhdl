@@ -5,7 +5,7 @@ module user_assert(input COND);
     begin
         if (COND !== 1)
         begin
-            $display("ASSERTION FAILED in %m");
+            $display("\033[7;31mASSERTION FAILED\033[0m in %m");
             $finish;
         end
     end
