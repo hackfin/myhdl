@@ -12,10 +12,17 @@ def setupCosimulationIcarus(**kwargs):
 		tbname = kwargs['tb']
 	except KeyError:
 		tbname = name
+	try:
+		use_assert = kwargs['use_assert']
+	except KeyError:
+		use_assert = False
 	objfile = "%s.o" % name
 	if path.exists(objfile):
 		os.remove(objfile)
-	analyze_cmd = ['iverilog', '-o', objfile, '%s.v' % name, '%s.v' % tbname]
+	analyze_cmd = ['iverilog', '-g2012']
+	analyze_cmd += ['-o', objfile, '%s.v' % name, '%s.v' % tbname]
+	if use_assert:
+		analyze_cmd += ['aux/assert.v']
 	analyze_cmd += ['techmap/cells_sim.v', '-I', 'techmap']
 	subprocess.call(analyze_cmd)
 	simulate_cmd = ['vvp', '-m', '../../../../cosimulation/icarus/myhdl.vpi']

@@ -1086,7 +1086,10 @@ class _AnalyzeBlockVisitor(_AnalyzeVisitor):
             s = self.tree.sigdict[n]
             if s._driven:
                 self.raiseError(node, _error.SigMultipleDriven, n)
-            s._source = self.tree.parent
+            if hasattr(self.tree, 'parent'):
+                s._source = self.tree.parent
+            else:
+                s._source = None
             s._driven = "reg"
         for n in self.tree.inputs:
             s = self.tree.sigdict[n]

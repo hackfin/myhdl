@@ -69,18 +69,22 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		self.visit(a)
 		self.visit(b)
 
-		if a.syn.isConst() and b.syn.isConst():
-			sm = SynthesisMapper(SM_WIRE)
-			self.dbg(node, BLUEBG, "BINOP CONST EXPR", "%s" % (node.op))
-			res = self.const_eval(node)
-			sm.q = ConstSignal(res, res.bit_length())
-			del a.syn, b.syn
-		else:
-			try:
-				sm = m.apply_binop(node, a.syn, b.syn)
-			except AttributeError:
-				self.dbg(node, REDBG, "FAILURE", "Attribute failure, a: %s b: %s" % (type(a), type(b)))
-				raise AssertionError
+		try:
+			if a.syn.isConst() and b.syn.isConst():
+				sm = SynthesisMapper(SM_WIRE)
+				self.dbg(node, BLUEBG, "BINOP CONST EXPR", "%s" % (node.op))
+				res = self.const_eval(node)
+				sm.q = ConstSignal(res, res.bit_length())
+				del a.syn, b.syn
+			else:
+				try:
+					sm = m.apply_binop(node, a.syn, b.syn)
+				except AttributeError:
+					self.dbg(node, REDBG, "FAILURE", "Attribute failure, a: %s b: %s" % (type(a), type(b)))
+					raise AssertionError
+		except:
+			self.dbg(node, REDBG, "FAILURE", "Attribute failure, a: %s b: %s" % (type(a), type(b)))
+			raise AssertionError
 
 		node.syn = sm
 
@@ -106,8 +110,13 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		else:
 			self.getAttr(node)
 
-#	def visit_Assert(self, node):
-#		print(_n())
+	def visit_Assert(self, node):
+		lineno = self.getLineNo(node)
+		lineno += self.tree.lineoffset
+		c = self.context.addCell("assert:%s:%d" % (self.tree.sourcefile, lineno), "user_assert", True)
+		self.visit(node.test)
+		print(type(node.test.syn.q))
+		c.setPort("COND", node.test.syn.q)
 
 	def visit_Store(self, node):
 		if self.state == S_COLLECT:
@@ -206,6 +215,17 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			self.visit(arg)
 			arg.syn.is_signed = True
 			node.syn = arg.syn # Pass on
+		elif f is intbv:
+			if isinstance(node.args[0], ast.Num):
+				self.dbg(node, GREEN, "ASSIGN NUM", f.__name__)
+				sm = SynthesisMapper(SM_WIRE)
+				val = node.args[0].n
+				sm.q = ConstSignal(val, 32)
+				node.syn = sm
+			else:
+				val = node.args[0]
+				self.visit(val)
+				node.syn = val.syn
 		elif f is concat:
 			self.dbg(node, GREEN, "CONCAT", "")
 			q = self.context.addSignal(None, 0)
@@ -215,6 +235,8 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			sm = SynthesisMapper(SM_WIRE)
 			sm.q = q
 			node.syn = sm
+		elif f in [delay, print, range]:
+			self.dbg(node, REDBG, "IGNORED FUNCTION", f)
 		else:
 			self.raiseError(node, "Can't synthesize function %s" % f.__name__)
 			
@@ -227,15 +249,15 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		a = node.left
 		b = node.comparators[0]
 		l = a.syn.q.size()
-		if l > 1 or isinstance(b.value, ast.Name):
-			# print("apply_binop() name %s" % (name))
-			sm = self.context.apply_compare(node, a.syn, b.syn, l)
-		else:
-			node.defer = DEFER_MUX
-			sm = SynthesisMapper(SM_BOOL)
-			if hasattr(b, 'value'):
+		if hasattr(b, 'value'):
+			if l > 1 or isinstance(b.value, ast.Name):
+				# print("apply_binop() name %s" % (name))
+				sm = self.context.apply_compare(node, a.syn, b.syn, l)
+			else:
+				node.defer = DEFER_MUX
+				sm = SynthesisMapper(SM_BOOL)
 				if b.value in [True, 1]:
-					sm.q = a
+					sm.q = a.syn.q
 				elif b.value in [False, 0]:
 					sm.q = self.context.addSignal(None, 1)
 					name = NEW_ID(__name__, node, "not")
@@ -243,8 +265,11 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 					self.context.addNotGate(name, sin, SigBit(sm.q))
 				else:
 					self.raiseError(node, "Unsupported right hand value %s" % (type(b.value)))
-			else:
-				self.raiseError(node, "Unsupported right hand type %s" % (type(b)))
+		elif hasattr(b, 'syn'):
+			sm = self.context.apply_compare(node, a.syn, b.syn, l)
+		else:
+			print(dir(b))
+			self.raiseError(node, "Unsupported right hand type %s" % (type(b)))
 				
 		node.syn = sm
 
@@ -303,8 +328,36 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 	def visit_IfExp(self, node):
 		self.generic_visit(node)
 
-#	def visit_For(self, node):
-#		print(_n())
+	############################################################
+	# These are procedural nodes that need special attention.
+	# Normally, we'd synthesize event driven structures only.
+	# But for verification, we might have to mimic some sequential
+	# logic as well
+
+	def visit_While(self, node):
+		print(_n())
+
+	def visit_Yield(self, node):
+		print(_n())
+
+
+	def visit_For(self, node):
+		"""A for loop just instances an up/down counter and tracks the
+		yield statements to try to infer something"""
+		print(_n())
+#		var = node.target.id
+#        cf = node.iter
+#        f = self.getObj(cf.func)
+#        args = cf.args
+#        assert len(args) <= 3
+#        self.require(node, len(args) < 3, "explicit step not supported")
+#        self.require(node, len(args) > 0, "at least one argument requested")
+#
+#        if f is range:
+#
+#        else:  # downrange
+
+		z = input("##- UNSUPPORTED for i in func() statement: HIT RETURN")
 
 	def manageEdges(self, ifnode, senslist):
 		""" Helper method to convert MyHDL style template into VHDL style"""
@@ -369,8 +422,14 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			self.visit(stmt)
 
 	def visit_NameConstant(self, node):
-		print("ID", node.id)
-		raise Synth_Nosupp("Can't handle this YET")
+		self.dbg(node, REDBG, "Name constant", "%s" % type(node.value))
+		v = node.value
+		if isinstance(v, int) or isinstance(v, bool):
+			sm = SynthesisMapper(SM_NUM)
+			sm.q = ConstSignal(v)
+		else:
+			self.raiseError(node, "Unsupported constant")
+		node.syn = sm
 
 	def visit_Name(self, node):
 		m = self.context
@@ -399,10 +458,11 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				sm = SynthesisMapper(SM_MEMPORT)
 				name = NEW_ID(__name__, node, "mem")
 				sm.q = m.addSignal(name, len(mdesc.elObj))
+			elif node.id in self.tree.symdict:
+				obj = self.tree.symdict[node.id]
+				self.dbg(node, REDBG, "IGNORING TYPE", "%s" % (obj))
+				return
 			else:
-				print("WIRING")
-				for n, i in m.wiring.items():
-					print(n, i)
 				raise KeyError("'%s' not in dictionary" % node.id)
 
 			node.syn = sm
@@ -425,7 +485,11 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 
 		if isinstance(node.slice, ast.Slice):
 			self.accessSlice(node)
-		elif isinstance(obj, list):
+		elif isinstance(obj, _Rom):
+			self.visit(node.value)
+			print(node.slice.value)
+			z = input("##- UNSUPPORTED: HIT RETURN")
+		elif isinstance(obj, (list, tuple)):
 			self.visit(node.value)
 			node.syn = node.value.syn # Pass on
 			self.dbg(node, REDBG, "MEMORY PORT FOR '%s', addr: %s" % (node.value.id, node.slice.value.obj._name))
@@ -435,12 +499,6 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		else:
 			self.accessIndex(node)
 	
-
-#	def visit_While(self, node):
-#		print(_n())
-
-#	def visit_Yield(self, node):
-#		print(_n())
 
 	def visit_stmt(self, body):
 		for stmt in body:
@@ -726,10 +784,12 @@ def convert_wires(m, c, a, n):
 		# c.setParam(n, a)
 	elif a == None:
 		pass
-	else:
+	elif hasattr(a, '__dict__'):
 		print("Resolve class (bus wire)")
 		for i in a.__dict__.items():
 			convert_wires(m, c, i[1], n + "_" + i[0])
+	else:
+		raise TypeError("Unsupported wire type for %s: %s" % (n, type(a).__name__))
 		
 def infer_handle_interface(design, instance, parent_wires):
 	blk = instance.obj

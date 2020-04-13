@@ -146,6 +146,8 @@ class Design:
 		m = design.top_module()
 		if rename_default:
 			design.rename(m, ys.IdString("\\" + name))
+		# Can cause failures in cosim: TODO investigate
+		# ys.run_pass("write_verilog -norename %s_mapped.v" % name, design)
 		ys.run_pass("write_verilog %s_mapped.v" % name, design)
 
 	def test_synth(self):
@@ -298,7 +300,13 @@ class Module:
 
 	EX_COND, EX_SAME, EX_CARRY, EX_TWICE = range(4)
 
-	_opmap = {
+	_unopmap = {
+		ast.USub	 :   ys.Module.addNeg,
+		ast.Invert	 :   ys.Module.addNot,
+		ast.Not		 :   ys.Module.addNot,
+	}
+
+	_binopmap = {
 		ast.Add		 : ( ys.Module.addAdd,	 EX_CARRY ),
 		ast.Sub		 : ( ys.Module.addSub,	 EX_SAME ),
 		ast.Mult	 : ( ys.Module.addMul,	 EX_TWICE ),
@@ -311,8 +319,6 @@ class Module:
 		ast.BitAnd	 : ( ys.Module.addAnd,	 EX_SAME ),
 		ast.BitXor	 : ( ys.Module.addXor,	 EX_SAME ),
 		ast.FloorDiv : ( ys.Module.addDiv,	 EX_SAME ),
-		ast.Invert	 : ( ys.Module.addNot,	 EX_SAME ),
-		ast.Not		 : ( ys.Module.addNot,	 EX_SAME ),
 		ast.UAdd	 : ( ys.Module.addAdd,	 EX_SAME ),
 		ast.USub	 : ( ys.Module.addSub,	 EX_SAME ),
 		ast.Eq		 : ( ys.Module.addEq,	 EX_COND ),
@@ -346,7 +352,7 @@ class Module:
 		name = NEW_ID(__name__, node, "cmp")
 		op = node.ops[0]
 
-		f = self._opmap[type(op)][0]
+		f = self._binopmap[type(op)][0]
 		f(self.module, name, a.q, b.q, sm.q)
 		return sm
 
@@ -364,7 +370,7 @@ class Module:
 			b.q.extend_u0(lb, b.is_signed)
 
 
-		f, ext = self._opmap[type(op)]
+		f, ext = self._binopmap[type(op)]
 		# print(op)
 
 		sm = SynthesisMapper(SM_WIRE)
@@ -386,7 +392,7 @@ class Module:
 		return sm
 
 	def apply_unop(self, name, op, a, q):
-		self._opmap[type(op)][0](self.module, name, a, q)
+		self._unopmap[type(op)](self.module, name, a, q)
 
 	def connect(self, dst, src):
 		if dst.size() != src.size():
@@ -703,23 +709,23 @@ class Instance:
 			else:
 				print("OTHER %s (type %s)" % (n, type(i).__name__))
 
-	def signals_name_init(self):
-		"Hack to pre-init names of locally declared signals"
-		def expand(parent, names, level):
-			if level > 5:
-				return
-			for n, i in names.items():
-				if isinstance(i, _Signal):
-					if i._name == None:
-						name = parent + n
-						print("Init Signal name %s" % name)
-						i._name = name
-					else:
-						print("Signal already has name %s" % i._name)
-				elif hasattr(i, '__dict__'):
-					expand(n + '_', i.__dict__, level + 1)
-			
-		expand("", self.symdict, 0)
+#	def signals_name_init(self):
+#		"Hack to pre-init names of locally declared signals"
+#		def expand(parent, names, level):
+#			if level > 5:
+#				return
+#			for n, i in names.items():
+#				if isinstance(i, _Signal):
+#					if i._name == None:
+#						name = parent + n
+#						print("Init Signal name %s" % name)
+#						i._name = name
+#					else:
+#						print("Signal already has name %s" % i._name)
+#				elif hasattr(i, '__dict__'):
+#					expand(n + '_', i.__dict__, level + 1)
+#			
+#		expand("", self.symdict, 0)
 		
 
 	def analyze_signals(self, symdict):
@@ -778,7 +784,7 @@ def append_sig(i, a):
 		a += '_%s_' % i.func.__name__
 	elif i == None:
 		pass
-	else:
+	elif inspect.isclass(i):
 		a += class_key(i)
 
 	return a
@@ -922,12 +928,12 @@ Used for separation of common functionality of visitor classes"""
 		else:
 			raise AssertionError("object not found")
 		if isinstance(obj, _Signal):
-			self.dbg(t, VIOBG, "getAttr ",	"signal " + repr(node))
+			self.dbg(obj, VIOBG, "getAttr ",	"signal " + repr(node))
 			if node.attr == 'next':
 				self.SigAss = obj._name
 				self.visit(node.value)
 			elif node.attr == 'posedge':
-				self.dbg(t, VIOBG, "POSEDGE** ",  "clk " + repr(node))
+				self.dbg(obj, VIOBG, "POSEDGE** ",  "clk " + repr(node))
 				self.polarity = 1
 			elif node.attr == 'negedge':
 				self.polarity = -1
@@ -945,7 +951,7 @@ Used for separation of common functionality of visitor classes"""
 			sm.q = ConstSignal(int(e), obj._nrbits)
 			node.syn = sm
 		else:
-			self.dbg(t, REDBG, "getAttr ",	"unknown " + repr(obj))
+			self.dbg(obj, REDBG, "getAttr ",	"unknown " + repr(obj))
 
 	def accessSlice(self, node):
 		sm = SynthesisMapper(SM_WIRE)
@@ -972,9 +978,13 @@ Used for separation of common functionality of visitor classes"""
 	def accessIndex(self, node):
 		sm = SynthesisMapper(SM_WIRE)
 		self.visit(node.value)
+		try:
+			sig = node.value.syn.q
+		except AttributeError:
+			self.raiseError(node, "%s Has no index" % type(node.value.obj))
 
-		sig = node.value.syn.q
-		sm.q = sig.extract(node.slice.value.n, 1)
+		i = node.slice.value.n
+		sm.q = sig.extract(i, 1)
 		node.syn = sm
 
 	def findWire(self, node):

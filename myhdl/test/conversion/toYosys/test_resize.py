@@ -174,6 +174,7 @@ def test_resize_vectors_must_fail(succeed, uut, din, imm, m, dout):
 		run_conversion(uut, False, wrapper, IMM = imm, MODE = m, DATA_IN = din, DATA_OUT = dout,
 			display_module="$resize_vectors_add_1_3_24_24_8")
 		check_resize_vectors(succeed, uut, din, imm, m, dout)
+		raise AssertionError("Must fail")
 	except ConversionError:
 		pass
 
