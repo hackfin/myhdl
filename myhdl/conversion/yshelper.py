@@ -21,7 +21,7 @@ from myhdl._ShadowSignal import _ShadowSignal, _SliceSignal, _TristateDriver
 from myhdl.conversion._misc import (_get_argnames, _error)
 
 from pyosys import libyosys as ys
-from myhdl.conversion import blackbox
+from myhdl.conversion import yosys_bb
 
 SM_NUM, SM_BOOL, SM_STRING, SM_WIRE, SM_RECORD, SM_VAR, SM_MEMPORT = range(7)
 
@@ -196,6 +196,8 @@ class Const:
 				self.const = ys.Const(bitvector)
 		elif isinstance(value, bool):
 			self.const = ys.Const(int(value), 1)
+		elif isinstance(value, str):
+			self.const = ys.Const(value)
 		else:
 			raise Synth_Nosupp("Unsupported type %s" % type(value).__name__)
 
@@ -590,18 +592,18 @@ class Module:
 			print("MEMORY", m[0], m[1])
 			self.memories[m[0]] = ( m[1] )
 
-	def infer_rom(self, rom, addr_signame, data_signame):
-		intf = BBInterface("bb_rom", self)
-		sm = SynthesisMapper(SM_WIRE)
+	def infer_rom(self, romobj, sig_data, sig_addr):
+		"Infer ROM using the blackbox synthesis method"
+		intf = BBInterface("rom_" + romobj.name, self)
 
-		# addr = self.addSignal(None, 8)
-		# data = self.addSignal(None, 8)
-		addr = myhdl.Signal(intbv()[8:])
-		data = myhdl.Signal(intbv()[8:])
-		rom = blackbox.Rom(addr, data, rom)
+		sm = SynthesisMapper(SM_WIRE)
+		
+		rom = yosys_bb.Rom(sig_addr, sig_data, romobj.rom)
 		rom.infer(self, intf)
-		read_data = self.addSignal(None, 8)
-		sm.q = read_data
+
+		intf.wireup(True)
+		outs = intf.getOutputs()
+		sm.q = outs[0]
 		return sm
 
 def dump(n):
@@ -1345,30 +1347,75 @@ class yosys:
 	def __init__(self):
 		self.id = "YOSYS_SYNTHESIS"
 
-
 class BBInterface:
 	"Black box interface"
 	def __init__(self, name, module):
 		self.interface = {}
 		self.name = name
 		self.module = module
+		self.main_out = None # XXX Hack
+
+	def getId(self):
+		return PID(self.name)
+
+	def toInitData(self, values_list, dbits):
+		init_data = ConstSignal(values_list[0], dbits)
+		for i in values_list[1:]:
+			init_data.append(ConstSignal(i, dbits))
+
+		return init_data
+
+	def getOutputs(self):
+		"This is a hack for now, as we support one output per assignment only"
+		return [ self.main_out ]
 
 	def addWire(self, sig, out = False):
 		m = self.module
 		if isinstance(sig, _Signal):
 			s = len(sig)
 			w = m.addWire(None, s, True)
+			sigspec = ys.SigSpec(w.get())
 			if not out:
 				w.get().port_output = True
 				w.get().port_input = False
 			else:
+				# Fixme: Within assign statements, we can have only
+				# one output for now (no record assignments)
+				#
+				self.main_out = sigspec # Record last assigned output
 				w.get().port_output = False
 				w.get().port_input = True
 
-			sigspec = ys.SigSpec(w.get())
-			self.interface[sig._name] = sigspec
+			sigid = sig._name
+			if sigid == None:
+				raise AssertionError("Signal must be named")
+
+			self.interface[sigid] = sigspec
 		else:
 			raise AssertionError("Not a Signal")
 			
 		return sigspec
+
+	def __repr__(self):
+		a = "{ Inferface: \n"
+		for n, i in self.interface.items():
+			a += "\t%s : %s \n" % (n, i.as_wire().name.str())
+		a += "}\n"
+
+		return a
+
+	def wireup(self, defer = False):	
+		"When defer == True, do not connect outputs"
+		m = self.module
+		for n, i in self.interface.items():
+			sig = m.findWireByName(n)
+			w = i.as_wire()
+			# Reversed!
+			if w.port_output:
+				m.connect(i, sig)
+			elif w.port_input:
+				if defer:
+					pass
+				else:
+					m.connect(sig, i)
 		

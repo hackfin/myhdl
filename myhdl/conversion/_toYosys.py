@@ -146,9 +146,9 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			src = ConstSignal(rhs, rhs.bit_length())
 		elif isinstance(rhs, ast.Subscript):
 			if isinstance(node.value.value.obj, _Rom) and isinstance(node.value.slice, ast.Index):
-				self.dbg(node, BLUEBG, "DETECT", "found ROM %s" % (node.value.value))
-				rom = node.value.value.obj.rom
-				sm = self.context.infer_rom(rom, lhs, node.value.slice)
+				self.dbg(node, BLUEBG, "DETECT", "found ROM %s" % (node.value.value.obj))
+				rom = node.value.value.obj
+				sm = self.context.infer_rom(rom, lhs.obj, node.value.slice.value.obj)
 			else:
 				src = rhs.syn.q
 		else:
@@ -847,19 +847,12 @@ def infer_rtl(h, instance, design, module_signals):
 	impl = instance.obj
 	# print(impl.func.__name__)
 
-	for n, i in intf.interface.items():
-		sig = m.findWireByName(n)
-		w = i.as_wire()
-		# Reversed!
-		if w.port_output:
-			m.connect(i, sig)
-		if w.port_input:
-			m.connect(sig, i)
+	# Connect/wire up all interface connections to blackbox:
+	intf.wireup()
 
 	# infer_obj.dump()
 
 def wireup(m, c, inst):
-
 	for n, i in inst.wiring.items():
 		print("WIRE", n, i[0], i[1])
 		a = i[1]

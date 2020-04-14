@@ -380,10 +380,11 @@ class _Ram(object):
 
 
 class _Rom(object):
-    __slots__ = ['rom']
+    __slots__ = ['rom', 'name']
 
-    def __init__(self, rom):
+    def __init__(self, rom, name):
         self.rom = rom
+        self.name = name
 
 
 re_str = re.compile(r"[^%]+")
@@ -873,7 +874,7 @@ class _AnalyzeVisitor(ast.NodeVisitor, _ConversionMixin):
         elif n in self.tree.symdict:
             node.obj = self.tree.symdict[n]
             if _isTupleOfInts(node.obj):
-                node.obj = _Rom(node.obj)
+                node.obj = _Rom(node.obj, n)
                 self.tree.hasRom = True
             elif _isMem(node.obj):
                 m = _getMemInfo(node.obj)
