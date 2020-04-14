@@ -251,7 +251,7 @@ def test_blackbox_simple():
 	arst = False
 	design = design_from_entity(UNIT, arst)
 
-	# design.write_verilog("inst_simple_blackbox", True)
+	design.write_verilog("inst_simple_blackbox", True)
 	# design.display_rtl("$xor_8_8_8", fmt='ps')
 
 	# design.import_verilog("aux/assert.v")
@@ -296,7 +296,7 @@ def test_blackbox_ext():
  
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
 
-def test_blackbox_ext_parameter():
+def _test_blackbox_ext_parameter():
 	UNIT = inst_ext_parameter_blackbox
 	arst = False
 	design = design_from_entity(UNIT, arst)

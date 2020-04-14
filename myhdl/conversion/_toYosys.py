@@ -21,9 +21,10 @@ from myhdl.conversion.analyze_ng import (_analyzeGens,  _makeName,
 									   _Ram, _Rom, _enumTypeSet, _slice_constDict)
 
 
-from myhdl import intbv, concat
+from myhdl import intbv, concat, delay
 
 from myhdl._blackbox import _BlackBox
+
 
 try:
 	from myhdl.conversion.yshelper import *
@@ -132,6 +133,8 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		t = SM_WIRE
 		sm = None
 
+
+		# Right hand side (src)
 		if not hasattr(rhs, "obj"):
 			name = rhs.id
 			q = self.variables[name]
@@ -141,19 +144,27 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			t = SM_BOOL
 		elif isinstance(rhs, int):
 			src = ConstSignal(rhs, rhs.bit_length())
+		elif isinstance(rhs, ast.Subscript):
+			if isinstance(node.value.value.obj, _Rom) and isinstance(node.value.slice, ast.Index):
+				self.dbg(node, BLUEBG, "DETECT", "found ROM %s" % (node.value.value))
+				rom = node.value.value.obj.rom
+				sm = self.context.infer_rom(rom, lhs, node.value.slice)
+			else:
+				src = rhs.syn.q
 		else:
 			src = rhs.syn.q
 
+		# Left hand side (dst)
 		if not hasattr(lhs, "obj"):
 			name = lhs.id
 			self.variables[name] = rhs.syn
 			self.dbg(node, BLUEBG, "ASSIGN", "assign to variable %s" % (name))
-			dst = None
+			sm = rhs.syn
 		elif isinstance(lhs.obj, _Signal):
 			drvname = lhs.obj._name # Default driver name
 			if hasattr(lhs, "syn"):
 				# We already have an assigned port
-				self.dbg(node, BLUEBG, "ASSIGN", "assign '%s' to preassigned Port %s" % (drvname, lhs.obj._origname))
+				self.dbg(node, BLUEBG, "ASSIGN", "assign '%s' to preassigned Port %s size %d" % (drvname, lhs.obj._origname, lhs.syn.q.size()))
 				dst = lhs.syn.q
 				# Special case: detect memory cell read/write:
 				if lhs.syn.el_type == SM_MEMPORT:
@@ -164,22 +175,31 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 					name = NEW_ID(__name__, node, "memwr")
 					sm.cell, enable = self.handle_memport(port, name, "memwr")
 					sm.sources = { 'enable' : enable } # Store in 'open sources' dict
-				elif rhs.syn.el_type == SM_MEMPORT:
-					self.dbg(node, GREEN, "MEMPORT", "read port detected %s" % (type(rhs)))
-					name = NEW_ID(__name__, node, "memrd")
-					port = rhs.syn
-					sm = port
-					sm.cell, enable = self.handle_memport(port, name, "memrd")
-					sm.sources = { 'enable' : enable }
+				elif hasattr(rhs, 'syn'):
+					if rhs.syn.el_type == SM_MEMPORT:
+						self.dbg(node, GREEN, "MEMPORT", "read port detected %s" % (type(rhs)))
+						name = NEW_ID(__name__, node, "memrd")
+						port = rhs.syn
+						sm = port
+						sm.cell, enable = self.handle_memport(port, name, "memrd")
+						sm.sources = { 'enable' : enable }
+					else:
+						dst = lhs.syn.q
 				else:
-					pass
-				# FIXME: We might eliminate extra BUF drivers
+					self.dbg(node, BLUEBG, "ALREADY_HANDLED", "RHS type %s" % (type(rhs)))
+				dst = lhs.syn.q
+					
 			else:
 				self.dbg(node, BLUEBG, "ASSIGN", "assign '%s' to Signal type %s" % (drvname, type(lhs.obj)))
 				dst = self.findWire(lhs)
+		else:
+			raise Synth_Nosupp("Can't handle this YET")
 
-			# FIXME: Redundancies with deferred size fixups, see handle_toplevel_assignment()
-			# Size handling and sign extension:
+		# Handle synthesis mapping / resizes:
+
+
+		if not sm:
+			print("dst: %d  src: %d" % (dst.size(), src.size()))
 			if dst.size() > src.size():
 				self.dbg(node, REDBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
 				src.extend_u0(dst.size(), rhs.syn.is_signed)
@@ -190,10 +210,6 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				else:
 					self.raiseError(node, "OVERFLOW const value: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
 
-		else:
-			raise Synth_Nosupp("Can't handle this YET")
-
-		if not sm:
 			sm = SynthesisMapper(t)
 			sm.q = src
 
@@ -460,7 +476,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				sm.q = m.addSignal(name, len(mdesc.elObj))
 			elif node.id in self.tree.symdict:
 				obj = self.tree.symdict[node.id]
-				self.dbg(node, REDBG, "IGNORING TYPE", "%s" % (obj))
+				self.dbg(node, REDBG, "IGNORING TYPE", "%s" % repr(obj))
 				return
 			else:
 				raise KeyError("'%s' not in dictionary" % node.id)
@@ -488,7 +504,6 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		elif isinstance(obj, _Rom):
 			self.visit(node.value)
 			print(node.slice.value)
-			z = input("##- UNSUPPORTED: HIT RETURN")
 		elif isinstance(obj, (list, tuple)):
 			self.visit(node.value)
 			node.syn = node.value.syn # Pass on

@@ -4,6 +4,7 @@
 #
 import ast
 import inspect
+import myhdl
 
 from myhdl import intbv
 from myhdl._enum import EnumType, EnumItemType
@@ -20,6 +21,7 @@ from myhdl._ShadowSignal import _ShadowSignal, _SliceSignal, _TristateDriver
 from myhdl.conversion._misc import (_get_argnames, _error)
 
 from pyosys import libyosys as ys
+from myhdl.conversion import blackbox
 
 SM_NUM, SM_BOOL, SM_STRING, SM_WIRE, SM_RECORD, SM_VAR, SM_MEMPORT = range(7)
 
@@ -587,6 +589,20 @@ class Module:
 		for m in instance.memdict.items():
 			print("MEMORY", m[0], m[1])
 			self.memories[m[0]] = ( m[1] )
+
+	def infer_rom(self, rom, addr_signame, data_signame):
+		intf = BBInterface("bb_rom", self)
+		sm = SynthesisMapper(SM_WIRE)
+
+		# addr = self.addSignal(None, 8)
+		# data = self.addSignal(None, 8)
+		addr = myhdl.Signal(intbv()[8:])
+		data = myhdl.Signal(intbv()[8:])
+		rom = blackbox.Rom(addr, data, rom)
+		rom.infer(self, intf)
+		read_data = self.addSignal(None, 8)
+		sm.q = read_data
+		return sm
 
 def dump(n):
 	if isinstance(n, ast.Num):
@@ -1289,7 +1305,7 @@ Used for separation of common functionality of visitor classes"""
 
 		lhs = stmt.targets[0]
 		rhs = stmt.value
-
+		result = stmt.syn.q
 		m = self.context
 		sig = lhs.obj 
 		name = sig._name
@@ -1302,12 +1318,12 @@ Used for separation of common functionality of visitor classes"""
 				outsig = m.findWireByName(name)
 				signame = outsig.as_wire().name
 				self.dbg(stmt, GREEN, "PORT ASSIGN", "PORT local: '%s', port: '%s', sig: %s" % (name, portname, signame))
-				dst, src = (outsig, rhs.syn.q)
+				dst, src = (outsig, result)
 			else:
 				# Try find a locally declared signal:
 				outsig = m.findWireByName(name)
 				if outsig:
-					dst, src = (outsig, rhs.syn.q)
+					dst, src = (outsig, result)
 				else:
 					self.dbg(stmt, REDBG, "UNCONNECTED", "PORT local: '%s', orig: '%s'" % (name, oname))
 					raise AssertionError
@@ -1316,19 +1332,7 @@ Used for separation of common functionality of visitor classes"""
 			signame = outsig.as_wire().name
 			self.dbg(stmt, REDBG, "SIGNAL local: '%s', %s" % (name, signame))
 			# Simply connect RHS to LHS:
-			dst, src = (outsig, rhs.syn.q)
-
-		# Size handling and sign extension:
-		if dst.size() > src.size():
-			self.dbg(stmt, REDBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
-			src.extend_u0(dst.size(), rhs.syn.is_signed)
-		elif dst.size() < src.size():
-			if rhs.syn.carry:
-				self.dbg(stmt, REDBG, "TRUNC", "Implicit carry truncate: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
-				src = src.extract(0, dst.size())
-			else:
-				self.raiseError(stmt, "OVERFLOW const value: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
-
+			dst, src = (outsig, result)
 
 		m.connect(dst, src)
 

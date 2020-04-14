@@ -6,6 +6,7 @@ from .test_simple import up_counter
 from myhdl import CosimulationError
 from myhdl.conversion import yshelper
 
+from ..general import test_interfaces1
 from ..general import test_intbv_signed
 from ..general import test_bin2gray
 from ..general import test_toplevel_interfaces
@@ -147,16 +148,16 @@ def test_general(uut):
 	design.write_verilog(name, True)
 	run_tb(cosim_stim(uut), 2000)
 
-# UUT_LIST = [ (test_bin2gray.bin2grayBench, ( 8, test_bin2gray.bin2gray )) ]
-
 
 fsm_signals = (Signal(bool(0)), Signal(test_fsm.t_State_b.SEARCH), Signal(bool(0)), Signal(bool(0)), Signal(bool(1)), test_fsm.t_State_b)
 
+# UUT_LIST = [ (test_bin2gray.bin2grayBench, ( 8, test_bin2gray.bin2gray )) ]
 # UUT_LIST = [ (test_fsm.FramerCtrl, fsm_signals) ]
 
-# UUT_LIST = [ (test_intbv_signed.PlainIntbv, None) ]
-UUT_LIST = []
-UUT_LIST += [ (test_toplevel_interfaces.tb_top_level_interfaces, None) ]
+UUT_LIST = [ (test_toplevel_interfaces.tb_top_level_interfaces, None) ]
+UUT_LIST = [ (test_interfaces1.c_testbench_one, None) ]
+UUT_LIST += [ (test_interfaces1.c_testbench_two, None) ]
+UUT_LIST += [ (test_intbv_signed.PlainIntbv, None) ]
 
 @pytest.mark.xfail
 @pytest.mark.parametrize("uut, args", UUT_LIST)
