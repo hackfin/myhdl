@@ -57,6 +57,21 @@ def stimulus_assert(clk, ce, reset, dout, debug):
 
 	return instances()
 
+@block
+def stimulus_for(clk, ce, reset, dout, debug):
+	# Dummy to prevent 'optimization' of dout
+	dummy = dummy_driver(clk, dout)
+
+	@instance
+	def stimulus():
+		a = intbv(3)[4:]
+		yield delay(10)
+		b = intbv(3)[3:]
+		assert a == b
+
+	return instances()
+
+
 UUT_LIST_FAIL = [ stimulus_assert_fail ]
 
 # These MUST fail

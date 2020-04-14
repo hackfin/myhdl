@@ -4,6 +4,7 @@
 #
 import ast
 import inspect
+import myhdl
 
 from myhdl import intbv
 from myhdl._enum import EnumType, EnumItemType
@@ -20,6 +21,7 @@ from myhdl._ShadowSignal import _ShadowSignal, _SliceSignal, _TristateDriver
 from myhdl.conversion._misc import (_get_argnames, _error)
 
 from pyosys import libyosys as ys
+from myhdl.conversion import yosys_bb
 
 SM_NUM, SM_BOOL, SM_STRING, SM_WIRE, SM_RECORD, SM_VAR, SM_MEMPORT = range(7)
 
@@ -194,6 +196,8 @@ class Const:
 				self.const = ys.Const(bitvector)
 		elif isinstance(value, bool):
 			self.const = ys.Const(int(value), 1)
+		elif isinstance(value, str):
+			self.const = ys.Const(value)
 		else:
 			raise Synth_Nosupp("Unsupported type %s" % type(value).__name__)
 
@@ -587,6 +591,20 @@ class Module:
 		for m in instance.memdict.items():
 			print("MEMORY", m[0], m[1])
 			self.memories[m[0]] = ( m[1] )
+
+	def infer_rom(self, romobj, sig_data, sig_addr):
+		"Infer ROM using the blackbox synthesis method"
+		intf = BBInterface("rom_" + romobj.name, self)
+
+		sm = SynthesisMapper(SM_WIRE)
+		
+		rom = yosys_bb.Rom(sig_addr, sig_data, romobj.rom)
+		rom.infer(self, intf)
+
+		intf.wireup(True)
+		outs = intf.getOutputs()
+		sm.q = outs[0]
+		return sm
 
 def dump(n):
 	if isinstance(n, ast.Num):
@@ -1289,7 +1307,7 @@ Used for separation of common functionality of visitor classes"""
 
 		lhs = stmt.targets[0]
 		rhs = stmt.value
-
+		result = stmt.syn.q
 		m = self.context
 		sig = lhs.obj 
 		name = sig._name
@@ -1302,12 +1320,12 @@ Used for separation of common functionality of visitor classes"""
 				outsig = m.findWireByName(name)
 				signame = outsig.as_wire().name
 				self.dbg(stmt, GREEN, "PORT ASSIGN", "PORT local: '%s', port: '%s', sig: %s" % (name, portname, signame))
-				dst, src = (outsig, rhs.syn.q)
+				dst, src = (outsig, result)
 			else:
 				# Try find a locally declared signal:
 				outsig = m.findWireByName(name)
 				if outsig:
-					dst, src = (outsig, rhs.syn.q)
+					dst, src = (outsig, result)
 				else:
 					self.dbg(stmt, REDBG, "UNCONNECTED", "PORT local: '%s', orig: '%s'" % (name, oname))
 					raise AssertionError
@@ -1316,19 +1334,7 @@ Used for separation of common functionality of visitor classes"""
 			signame = outsig.as_wire().name
 			self.dbg(stmt, REDBG, "SIGNAL local: '%s', %s" % (name, signame))
 			# Simply connect RHS to LHS:
-			dst, src = (outsig, rhs.syn.q)
-
-		# Size handling and sign extension:
-		if dst.size() > src.size():
-			self.dbg(stmt, REDBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
-			src.extend_u0(dst.size(), rhs.syn.is_signed)
-		elif dst.size() < src.size():
-			if rhs.syn.carry:
-				self.dbg(stmt, REDBG, "TRUNC", "Implicit carry truncate: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
-				src = src.extract(0, dst.size())
-			else:
-				self.raiseError(stmt, "OVERFLOW const value: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
-
+			dst, src = (outsig, result)
 
 		m.connect(dst, src)
 
@@ -1341,30 +1347,75 @@ class yosys:
 	def __init__(self):
 		self.id = "YOSYS_SYNTHESIS"
 
-
 class BBInterface:
 	"Black box interface"
 	def __init__(self, name, module):
 		self.interface = {}
 		self.name = name
 		self.module = module
+		self.main_out = None # XXX Hack
+
+	def getId(self):
+		return PID(self.name)
+
+	def toInitData(self, values_list, dbits):
+		init_data = ConstSignal(values_list[0], dbits)
+		for i in values_list[1:]:
+			init_data.append(ConstSignal(i, dbits))
+
+		return init_data
+
+	def getOutputs(self):
+		"This is a hack for now, as we support one output per assignment only"
+		return [ self.main_out ]
 
 	def addWire(self, sig, out = False):
 		m = self.module
 		if isinstance(sig, _Signal):
 			s = len(sig)
 			w = m.addWire(None, s, True)
+			sigspec = ys.SigSpec(w.get())
 			if not out:
 				w.get().port_output = True
 				w.get().port_input = False
 			else:
+				# Fixme: Within assign statements, we can have only
+				# one output for now (no record assignments)
+				#
+				self.main_out = sigspec # Record last assigned output
 				w.get().port_output = False
 				w.get().port_input = True
 
-			sigspec = ys.SigSpec(w.get())
-			self.interface[sig._name] = sigspec
+			sigid = sig._name
+			if sigid == None:
+				raise AssertionError("Signal must be named")
+
+			self.interface[sigid] = sigspec
 		else:
 			raise AssertionError("Not a Signal")
 			
 		return sigspec
+
+	def __repr__(self):
+		a = "{ Inferface: \n"
+		for n, i in self.interface.items():
+			a += "\t%s : %s \n" % (n, i.as_wire().name.str())
+		a += "}\n"
+
+		return a
+
+	def wireup(self, defer = False):	
+		"When defer == True, do not connect outputs"
+		m = self.module
+		for n, i in self.interface.items():
+			sig = m.findWireByName(n)
+			w = i.as_wire()
+			# Reversed!
+			if w.port_output:
+				m.connect(i, sig)
+			elif w.port_input:
+				if defer:
+					pass
+				else:
+					m.connect(sig, i)
 		
