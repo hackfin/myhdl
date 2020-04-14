@@ -35,7 +35,7 @@ def mapped_test(which, clk, debug, name = None):
 	tb = "tb_" + name
 	use_assert = True
 
-	return setupCosimulation(**locals())
+	return setupCosimulation(name, True, args)
 
 ############################################################################
 # Integrate general tests
@@ -116,24 +116,6 @@ def cosim_general(uut, args):
 	inst_uut = general(uut, clk, debug1, args)
 
 	return instances()
-
-@block
-def cosim_bench(uut, args):
-	"""Cosimulation run for test benches that take a block as argument
-	"""
-
-	clk = Signal(bool())
-	debug0, debug1 = [ Signal(bool()) for i in range(2) ]
-
-	# Important to have a clock generator, otherwise
-	# Cosim fails early without verbosity
-	inst_clkgen = clkgen(clk, 20)
-
-	inst_mapped = mapped_test(general, clk, debug0, uut.__name__)
-	inst_uut = general(uut, clk, debug1, args)
-
-	return instances()
-
 
 @pytest.mark.xfail
 @pytest.mark.parametrize("uut", [plain_intbv])

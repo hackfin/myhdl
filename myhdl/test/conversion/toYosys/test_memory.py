@@ -53,15 +53,14 @@ def rom2_dp(addr, dout):
 	Is expected to infer one memory initialization, several read ports"""
 
 	port_a, port_b = [ Signal(modbv(0)[len(dout):]) for i in range(2) ]
-	ROM2 = tuple([randrange(256) for i in range(256)])
 
 	@always_comb
 	def work_a() :
-		port_a.next = ROM2[addr]
+		port_a.next = ROM[addr]
 
 	@always_comb
 	def work_b() :
-		port_b.next = ROM2[~addr]
+		port_b.next = ROM[~addr]
 
 	@always_comb
 	def assign():
@@ -77,7 +76,7 @@ def RomBench(rom):
 	addr = Signal(intbv(1)[8:])
 	clk = Signal(bool(0))
 
-	rom_inst = rom(dout, addr, clk)
+	rom_inst = rom(addr, dout)
 
 	@instance
 	def stimulus():
@@ -100,7 +99,26 @@ def RomBench(rom):
 
 	return clkgen, stimulus, rom_inst
 
-# Note: Don't share signal instances, otherwise driver collisons!
+############################################################################
+
+class interface:
+	def __init__(self):
+		self.addr = 3
+		self.data = 8
+
+@block
+def cosim_bench(uut):
+	"""Cosimulation run for test benches that take a block as argument
+	"""
+
+	clk = Signal(bool())
+	debug0, debug1 = [ Signal(bool()) for i in range(2) ]
+
+	wrapper = CosimObjectWrapper(uut, "addr,dout" )
+	inst_uut = RomBench(wrapper)
+	inst_uut = RomBench(uut)
+
+	return instances()
 
 def isig(l):
 	return Signal(intbv()[l:])
@@ -108,33 +126,18 @@ def isig(l):
 def bsig():
 	return Signal(bool())
 
-UUT_LIST =  [ ( rom1,    (isig(8), isig(8)) ) ]
-UUT_LIST += [ ( rom2_dp, (isig(8), isig(8)) ) ]
-UUT_LIST += [ ( rom2,    (bsig(), isig(8), isig(8)) ) ]
+UUT_LIST =  [ rom1 ]
+# UUT_LIST += [ rom2 ]
 
-@pytest.mark.parametrize("uut, args", UUT_LIST)
-def test_memory(uut, args):
-	arst = False
-	name = uut.func.__name__
-	design = yshelper.Design(name)
-	inst_uut = uut(*args)
-	inst_uut.convert("yosys_module", design, name=name, trace=False)
-	design.write_verilog(name, True)
-	# run_tb(cosim_bench(uut, args), 2000)
-
-
+@pytest.mark.parametrize("uut", UUT_LIST)
+def test_memory(uut):
+	run_tb(cosim_bench(uut), 2000)
 
 # Currently unsupported:
-UUT_LIST_FAIL = [ ( rom1a, (isig(8), isig(8)) ) ]
+UUT_LIST_FAIL = [ rom1a, rom2_dp ]
 
 @pytest.mark.xfail
-@pytest.mark.parametrize("uut, args", UUT_LIST_FAIL)
+@pytest.mark.parametrize("uut", UUT_LIST_FAIL)
 def test_memory_fail(uut, args):
-	arst = False
-	name = uut.func.__name__
-	design = yshelper.Design(name)
-	inst_uut = uut(*args)
-	inst_uut.convert("yosys_module", design, name=name, trace=False)
-	design.write_verilog(name, True)
-	# run_tb(cosim_bench(uut, args), 2000)
+	run_tb(cosim_bench(uut), 2000)
 

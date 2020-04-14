@@ -4,8 +4,31 @@
 import myhdl
 from myhdl import *
 
-from .util import setupCosimulation
+import os
+path = os.path
+import subprocess
+
 from .lfsr8 import lfsr8
+from myhdl._block import block, _Block
+
+from myhdl.conversion import yshelper
+
+def setupCosimulation(name, use_assert, interface):
+	tb = "tb_" + name
+	objfile = "%s.o" % name
+	if path.exists(objfile):
+		os.remove(objfile)
+	analyze_cmd = ['iverilog', '-g2012']
+	analyze_cmd += ['-o', objfile, '%s.v' % name, '%s.v' % tb]
+	if use_assert:
+		analyze_cmd += ['aux/assert.v']
+	analyze_cmd += ['techmap/cells_sim.v', '-I', 'techmap']
+	subprocess.call(analyze_cmd)
+	simulate_cmd = ['vvp', '-m', '../../../../cosimulation/icarus/myhdl.vpi']
+	simulate_cmd += [ objfile ]
+	c = Cosimulation(simulate_cmd, **interface)
+	c.name = name
+	return c
 
 @block
 def clkgen(clk, DELAY):
@@ -55,31 +78,24 @@ def tb_unit(uut, uut_syn, async_reset):
 
 @block
 def mapped_uut(which, clk, ce, reset, dout, debug):
+	args = locals()
 	name = which.func.__name__ + "_mapped"
+	del args['which']
 
-	tb = "tb_" + name
+	return setupCosimulation(name, False, args)
 
-	return setupCosimulation(**locals())
 
 @block
 def mapped_uut_assert(which, clk, ce, reset, dout, debug):
+	args = locals()
 	name = which.func.__name__ + "_mapped"
+	del args['which']
 
-	tb = "tb_" + name
-	use_assert = True
+	return setupCosimulation(name, True, args)
 
-	return setupCosimulation(**locals())
 
-@block
-def mapped_wrapper(uut, clk, ce, reset, mode, data_out, data_in):
-	"Cosimulation object for yosys post-synthesis(mapping) verilog output"
-	name = uut.__name__ + "_mapped"
-	tb = "tb_" + name
-
-	return setupCosimulation(**locals())
 
 def design_from_entity(ent, async_reset = False, wrapper = None, **kwargs):
-	from myhdl.conversion import yshelper
 	clk = Signal(bool())
 	debug = Signal(bool(0))
 	ce = Signal(bool())
@@ -130,4 +146,34 @@ def run_tb(tb, cycles = 200000):
 	tb.config_sim(backend = 'myhdl', timescale="1ps", trace=True)
 	tb.run_sim(cycles)
 	tb.quit_sim() # Quit so we can run another one
+
+class CosimObjectWrapper:
+	"""Cosimulation wrapper to allow arbitrary UUTs being called
+from a uniform test bench interface"""
+	def __init__(self, func, strargs, name = None, use_assert = False):
+		self.func = func
+		if name == None:
+			name = func.__name__
+		self.strargs = strargs
+		self.name = name
+		self.use_assert = use_assert
+		self.design = yshelper.Design(name)
+
+
+	@block
+	def __call__(self, *args, **kwargs):
+		# Upon instancing the @block, this gets called and
+		# generates a co-simulation verilog file on the fly
+		l = self.strargs.split(',')
+		name = self.func.__name__
+		inst_uut = self.func(*args)
+		inst_uut.convert("yosys_module", self.design, name=name, trace=False)
+		self.design.test_synth()
+		self.design.write_verilog(name, True)
+
+		d = {}
+		for i in args:
+			d[l[i]] = i
+
+		return setupCosimulation(self.name + '_mapped', self.use_assert, d)
 
