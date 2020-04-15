@@ -6,7 +6,6 @@ import ast
 import inspect
 import myhdl
 
-from myhdl import intbv
 from myhdl._enum import EnumType, EnumItemType
 from myhdl import ConversionError
 
@@ -61,15 +60,42 @@ def lineno():
 	return inspect.currentframe().f_back.f_lineno
 
 
+def match(a, b):
+	"Match signal lengths"
+
+	la, lb = a.q.size(), b.q.size()
+
+	l = la
+
+	if la < lb: # and isinstance(node.left.obj, _Signal):
+		a.q.extend_u0(lb, a.is_signed)
+		l = lb
+	elif la > lb: # and isinstance(node.right.obj, _Signal):
+		b.q.extend_u0(la, b.is_signed)
+	
+	return l
+
 class SynthesisMapper:
-	def __init__(self, el_type):
+	def __init__(self, el_type, is_signed = False):
 		self.el_type = el_type
 		self.q = None
-		self.is_signed = False
 		self.carry = False # Carry flag
+		self.is_signed = is_signed
 
 	def isConst(self):
 		return self.el_type == SM_NUM
+
+def ConstDriver(val, bit_len = None):
+	if val < 0:
+		signed = True
+	else:
+		signed = False
+
+	sm = SynthesisMapper(SM_NUM, signed)
+	sm.q = ConstSignal(val, bit_len)
+
+	return sm
+		
 
 def NEW_ID(name, node, ext):
 	return ys.new_id(name, node.lineno, ext)
@@ -139,7 +165,7 @@ class Design:
 	def import_verilog(self, filename):
 		ys.run_pass("read_verilog %s" % filename, self.design)
 
-	def write_verilog(self, name, rename_default = False):
+	def write_verilog(self, name, rename_default = False, rename_signals = True):
 		"Write verilog"
 		ys.run_pass("hierarchy -check")
 		if name == None:
@@ -148,15 +174,18 @@ class Design:
 		m = design.top_module()
 		if rename_default:
 			design.rename(m, ys.IdString("\\" + name))
-		# Can cause failures in cosim: TODO investigate
-		# ys.run_pass("write_verilog -norename %s_mapped.v" % name, design)
-		ys.run_pass("write_verilog %s_mapped.v" % name, design)
+		if rename_signals:
+			ys.run_pass("write_verilog %s_mapped.v" % name, design)
+		else:
+			# Can cause failures in cosim: TODO investigate
+			ys.run_pass("write_verilog -norename %s_mapped.v" % name, design)
 
 	def test_synth(self):
 		design = self.design
 		ys.run_pass("write_ilang %s_mapped.il" % self.name, design)
 		ys.run_pass("memory_collect", design)
-		ys.run_pass("techmap -map techmap/lutrams_map.v", design)
+		# We don't test on that level yet
+		# ys.run_pass("techmap -map techmap/lutrams_map.v", design)
 		# ys.run_pass("techmap -map ecp5/brams_map.v", design)
 		# ys.run_pass("techmap -map ecp5/cells_map.v", design)
 		ys.run_pass("hierarchy -check", design)
@@ -182,29 +211,36 @@ def bitfield(n):
 class Const:
 	"Tight yosys Const wrapper"
 	def __init__(self, value, bits = None):
-		if type(value) == type(1):
+		if isinstance(value, int):
 			if bits == None:
 				l = value.bit_length()
-				if l < 1:
+				if value < 0:
+					l += 1 # Fixup to compensate python's awareness
+				elif l < 1:
 					l = 1
 				self.const = ys.Const(value, l)
 			else:
 				self.const = ys.Const(value, bits)
 		elif isinstance(value, intbv):
-			v = int(value)
-			l = v.bit_length() 
-			if l <= 32:
-				self.const = ys.Const(int(value), len(value))
-			else:
-				bitvector = bitfield(v)
-				print("long val %x[%d]" % (int(value), l))
-				self.const = ys.Const(bitvector)
+			self.fromIntbv(value, bits)
 		elif isinstance(value, bool):
 			self.const = ys.Const(int(value), 1)
 		elif isinstance(value, str):
 			self.const = ys.Const("\\" + value)
 		else:
 			raise Synth_Nosupp("Unsupported type %s" % type(value).__name__)
+
+	def fromIntbv(self, value, bits):
+		v = int(value)
+		if not bits:
+			bits = value._nrbits
+
+		if bits <= 32:
+			self.const = ys.Const(v, bits)
+		else:
+			bitvector = bitfield(v)
+			print("long val %x[%d]" % (int(value), bits))
+			self.const = ys.Const(bitvector, bits)
 
 	def get(self):
 		return self.const
@@ -363,32 +399,33 @@ class Module:
 	def __getattr__(self, name):
 		return getattr(self.module, name)
 
-	def apply_compare(self, node, a, b, l):
+	def apply_compare(self, node, a, b):
 		sm = SynthesisMapper(SM_BOOL)
 		sm.q = self.addSignal(None, 1)
 		name = NEW_ID(__name__, node, "cmp")
 		op = node.ops[0]
 
+		# Have to sort out cases:
+
+		l = match(a, b)
+
+		if a.is_signed or b.is_signed:
+			is_signed = True
+		else:
+			is_signed = False
+
+		if a.q.size() != b.q.size():
+			raise AssertionError
+
 		f = self._binopmap[type(op)][0]
-		f(self.module, name, a.q, b.q, sm.q)
+		f(self.module, name, a.q, b.q, sm.q, is_signed)
 		return sm
 
 	def apply_binop(self, node, a, b):
 
-		la, lb = a.q.size(), b.q.size()
-		op = node.op
+		l = match(a, b)
 
-		l = la
-
-		if la < lb and isinstance(node.left.obj, _Signal):
-			a.q.extend_u0(lb, a.is_signed)
-			l = lb
-		elif la > lb and isinstance(node.right.obj, _Signal):
-			b.q.extend_u0(lb, b.is_signed)
-
-
-		f, ext = self._binopmap[type(op)]
-		# print(op)
+		f, ext = self._binopmap[type(node.op)]
 
 		sm = SynthesisMapper(SM_WIRE)
 
@@ -1016,6 +1053,10 @@ Used for separation of common functionality of visitor classes"""
 			i = upper.n
 			n = lower.n - upper.n
 
+		if sig.size() < (i + n):
+			self.raiseError(node, "Invalid signal size: %d < %d" % (sig.size(), i + n))
+		# Pyosys can segfault if we don't do the above check
+		# NASTY.
 		sm.q = sig.extract(i, n)
 		node.syn = sm
 

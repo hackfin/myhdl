@@ -208,7 +208,7 @@ def SlicedSigned():
     '''
     @instance
     def logic():
-        b = intbv(4, min=-8, max=8)
+        b = intbv(0, min=-8, max=8)
         a = intbv(4, min=-8, max=8)
         print("SLicedSigned test")
         yield delay(10)

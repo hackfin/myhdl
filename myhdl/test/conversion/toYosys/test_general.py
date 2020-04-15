@@ -11,7 +11,7 @@ from ..general import test_intbv_signed
 from ..general import test_bin2gray
 from ..general import test_toplevel_interfaces
 from ..general import test_fsm
-
+yshelper.DebugOutput.debug = True
 import pytest
 
 @block
@@ -32,16 +32,21 @@ def mapped_test(which, clk, debug, name = None):
 	else:
 		name += "_mapped"
 
-	tb = "tb_" + name
-	use_assert = True
-
 	return setupCosimulation(name, True, args)
 
 ############################################################################
 # Integrate general tests
 
+class SelfContainingTb:
+	"Wrapper to emulate a self containing test bench"
+	def __init__(self, tb, uut):
+		self.func = uut # Emulate block
+		self.tb = tb
+	def __call__(self, clk, debug):
+		return self.tb
+		
 @block
-def plain_intbv(clk, debug):
+def self_containing_tb(uut, clk, debug):
 	"""Integrates tests that work using the simple assert module
 mechanism via yosys"""
 
@@ -49,7 +54,7 @@ mechanism via yosys"""
 	def dummy():
 		debug.next = 1
 
-	plain_intbv = test_intbv_signed.PlainIntbv()
+	inst = uut()
 
 	return instances()
 
@@ -93,6 +98,22 @@ def cosim_stim(uut):
 
 	return instances()
 
+
+@block
+def cosim_bench(uut, bench):
+	"""Cosimulation run for test benches that take a block as argument
+	"""
+
+	clk = Signal(bool())
+	debug0, debug1 = [ Signal(bool()) for i in range(2) ]
+
+	wrapper = CosimObjectWrapper(uut, "", None, True)
+	print(wrapper.use_assert)
+	inst_uut1 = bench(wrapper, clk, debug0)
+	inst_uut2 = bench(uut, clk, debug1)
+
+	return instances()
+
 @block
 def cosim_general(uut, args):
 	"""Cosimulation run for general tests
@@ -117,33 +138,53 @@ def cosim_general(uut, args):
 
 	return instances()
 
-@pytest.mark.xfail
-@pytest.mark.parametrize("uut", [plain_intbv])
-def test_general(uut):
-	arst = False
+
+UUT_LIST = [ (test_intbv_signed.PlainIntbv, self_containing_tb )]
+
+@pytest.mark.parametrize("uut,tb", UUT_LIST )
+def test_intbv(uut, tb):
 	name = uut.func.__name__
 	design = yshelper.Design(name)
 	clk = Signal(bool())
 	debug = Signal(bool())
-	inst_uut = uut(clk, debug)
-	inst_uut.convert("yosys_module", design, name=name, trace=False)
-	design.write_verilog(name, True)
-	run_tb(cosim_stim(uut), 2000)
+	inst_tb = tb(uut, clk, debug)
+	inst_tb.convert("yosys_module", design, name=name, trace=False)
+	design.write_verilog(name, True, False)
+	design.display_rtl("$" + name, fmt='dot')
+	wrapper = SelfContainingTb(tb, uut)
+	run_tb(cosim_stim(wrapper), 2000)
 
+# Those are not supported yet until sequential (@instance) support is
+# implemented
+UUT_LIST_INST_X = [ (test_intbv_signed.SlicedSigned, self_containing_tb )]
+UUT_LIST_INST_X += [ (test_intbv_signed.SignedConcat, self_containing_tb )]
+
+@pytest.mark.xfail
+@pytest.mark.parametrize("uut,tb", UUT_LIST_INST_X )
+def test_unsupported_sequential(uut, tb):
+	name = uut.func.__name__
+	design = yshelper.Design(name)
+	clk = Signal(bool())
+	debug = Signal(bool())
+	inst_tb = tb(uut, clk, debug)
+	inst_tb.convert("yosys_module", design, name=name, trace=False)
+	design.write_verilog(name, True, False)
+	design.display_rtl("$" + name, fmt='dot')
+	wrapper = SelfContainingTb(tb, uut)
+	run_tb(cosim_stim(wrapper), 2000)
 
 fsm_signals = (Signal(bool(0)), Signal(test_fsm.t_State_b.SEARCH), Signal(bool(0)), Signal(bool(0)), Signal(bool(1)), test_fsm.t_State_b)
 
 # UUT_LIST = [ (test_bin2gray.bin2grayBench, ( 8, test_bin2gray.bin2gray )) ]
 # UUT_LIST = [ (test_fsm.FramerCtrl, fsm_signals) ]
 
-UUT_LIST = [ (test_toplevel_interfaces.tb_top_level_interfaces, None) ]
-UUT_LIST = [ (test_interfaces1.c_testbench_one, None) ]
-UUT_LIST += [ (test_interfaces1.c_testbench_two, None) ]
-UUT_LIST += [ (test_intbv_signed.PlainIntbv, None) ]
+UUT_LIST_X = [ (test_toplevel_interfaces.tb_top_level_interfaces, None) ]
+UUT_LIST_X += [ (test_interfaces1.c_testbench_one, None) ]
+UUT_LIST_X += [ (test_interfaces1.c_testbench_two, None) ]
 
 @pytest.mark.xfail
 @pytest.mark.parametrize("uut, args", UUT_LIST)
-def test_general(uut, args):
+def _test_general(uut, args):
 	arst = False
 	name = uut.func.__name__
 	design = yshelper.Design(name)

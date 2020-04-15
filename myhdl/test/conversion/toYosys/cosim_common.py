@@ -22,7 +22,8 @@ def setupCosimulation(name, use_assert, interface):
 	analyze_cmd += ['-o', objfile, '%s.v' % name, '%s.v' % tb]
 	if use_assert:
 		analyze_cmd += ['aux/assert.v']
-	analyze_cmd += ['techmap/cells_sim.v', '-I', 'techmap']
+	# Don't involve technology specific mapping here:
+	# analyze_cmd += ['techmap/cells_sim.v', '-I', 'techmap']
 	subprocess.call(analyze_cmd)
 	simulate_cmd = ['vvp', '-m', '../../../../cosimulation/icarus/myhdl.vpi']
 	simulate_cmd += [ objfile ]
@@ -158,6 +159,7 @@ from a uniform test bench interface"""
 		self.name = name
 		self.use_assert = use_assert
 		self.design = yshelper.Design(name)
+		self.synth_pass = False # Run a synthesis pass
 
 
 	@block
@@ -168,7 +170,8 @@ from a uniform test bench interface"""
 		name = self.func.__name__
 		inst_uut = self.func(*args)
 		inst_uut.convert("yosys_module", self.design, name=name, trace=False)
-		self.design.test_synth()
+		if self.synth_pass:
+			self.design.test_synth()
 		self.design.write_verilog(name, True)
 
 		d = {}

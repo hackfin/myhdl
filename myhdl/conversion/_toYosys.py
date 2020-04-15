@@ -95,15 +95,27 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 	def visit_UnaryOp(self, node):
 		m = self.context
 		a = node.operand
-		self.dbg(node, BLUEBG, "UNARY_OP", "%s" % (node.op))
-		self.visit(a)
 
-		l = a.syn.q.size()
-		sm = SynthesisMapper(SM_WIRE)
-		sm.q = m.addSignal(None, l)
-		name = NEW_ID(__name__, node, "unop")
-		m.apply_unop(name, node.op, a.syn.q, sm.q)
+		# If we have a constant, resolve here
+		if isinstance(node.operand, ast.Num):
+			val = ast.literal_eval(node)
+			sm = ConstDriver(int(val))
+			self.dbg(node, REDBG, "UNOP type", "%s" % (node.operand))
+		elif isinstance(node.operand, _Signal):
+			self.dbg(node, BLUEBG, "UNARY_OP", "%s" % (node.op))
+			self.visit(a)
+
+			l = a.syn.q.size()
+			sm = SynthesisMapper(SM_WIRE)
+			sm.q = m.addSignal(None, l)
+			name = NEW_ID(__name__, node, "unop")
+			m.apply_unop(name, node.op, a.syn.q, sm.q)
+		else:
+			self.dbg(node, REDBG, "UNHANDLED_UNOP_TYPE", "%s" % type(node.operand))
+			raise Synth_Nosupp("Can't handle this YET")
+
 		node.syn = sm
+			
 		
 	def visit_Attribute(self, node):
 		if isinstance(node.ctx, ast.Store):
@@ -126,8 +138,11 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 	def visit_Assign(self, node):
 		lhs = node.targets[0]
 		rhs = node.value
+
+
 		self.visit(lhs)
 		# print("lhs", lhs.value)
+		self.dbg(node, REDBG, "DEBUG_XX", "type: %s" % (type(rhs)))
 		self.visit(rhs)
 
 		t = SM_WIRE
@@ -192,7 +207,14 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			else:
 				self.dbg(node, BLUEBG, "ASSIGN", "assign '%s' to Signal type %s" % (drvname, type(lhs.obj)))
 				dst = self.findWire(lhs)
+		elif isinstance(lhs.obj, intbv):
+			# POTENTIALLY_SEQUENTIAL
+			if hasattr(lhs, 'syn'):
+				dst = lhs.syn.q
+			else:
+				self.raiseError(node, "No new assignment with sliced var")
 		else:
+			self.dbg(node, REDBG, "UNHANDLED", "type %s" % (type(lhs.obj)))
 			raise Synth_Nosupp("Can't handle this YET")
 
 		# Handle synthesis mapping / resizes:
@@ -212,6 +234,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 
 			sm = SynthesisMapper(t)
 			sm.q = src
+			sm.is_signed = rhs.syn.is_signed
 
 		node.syn = sm
 
@@ -229,14 +252,21 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		if f == intbv.signed:
 			arg = fn.value
 			self.visit(arg)
+			src = arg.syn.q
+			# src.extend_u0(src.size(), True)
+			self.dbg(node, GREEN, "SIGNED NUM", "len:%d" % (src.size()))
 			arg.syn.is_signed = True
 			node.syn = arg.syn # Pass on
 		elif f is intbv:
 			if isinstance(node.args[0], ast.Num):
 				self.dbg(node, GREEN, "ASSIGN NUM", f.__name__)
 				sm = SynthesisMapper(SM_WIRE)
-				val = node.args[0].n
-				sm.q = ConstSignal(val, 32)
+				args = (node.args[0].value,)
+				kwargs = {}
+				for kw in node.keywords:
+					kwargs[kw.arg] = ast.literal_eval(kw.value)
+				intbv_inst = f(*args, **kwargs)
+				sm.q = ConstSignal(intbv_inst)
 				node.syn = sm
 			else:
 				val = node.args[0]
@@ -253,13 +283,15 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			node.syn = sm
 		elif f in [delay, print, range]:
 			self.dbg(node, REDBG, "IGNORED FUNCTION", f)
+		elif f is myhdl.StopSimulation:
+			self.dbg(node, REDBG, "RAISE FUNCTION", f)
 		else:
 			self.raiseError(node, "Can't synthesize function %s" % f.__name__)
 			
 
 	def visit_Compare(self, node):
 		name = None
-		# self.dbg(node, REDBG, "NOTICE", "call compare attr")
+		self.dbg(node, REDBG, "NOTICE", "call compare attr")
 		# print("Add wire with name %s" % (name))
 		self.generic_visit(node)
 		a = node.left
@@ -268,7 +300,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		if hasattr(b, 'value'):
 			if l > 1 or isinstance(b.value, ast.Name):
 				# print("apply_binop() name %s" % (name))
-				sm = self.context.apply_compare(node, a.syn, b.syn, l)
+				sm = self.context.apply_compare(node, a.syn, b.syn)
 			else:
 				node.defer = DEFER_MUX
 				sm = SynthesisMapper(SM_BOOL)
@@ -282,7 +314,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				else:
 					self.raiseError(node, "Unsupported right hand value %s" % (type(b.value)))
 		elif hasattr(b, 'syn'):
-			sm = self.context.apply_compare(node, a.syn, b.syn, l)
+			sm = self.context.apply_compare(node, a.syn, b.syn)
 		else:
 			print(dir(b))
 			self.raiseError(node, "Unsupported right hand type %s" % (type(b)))
@@ -290,9 +322,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		node.syn = sm
 
 	def visit_Num(self, node):
-		sm = SynthesisMapper(SM_NUM)
-		sm.q = Signal(Const(node.value))
-		node.syn = sm
+		node.syn = ConstDriver(node.value)
 #
 #	def visit_Str(self, node):
 #		print(_n())
@@ -441,8 +471,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		self.dbg(node, REDBG, "Name constant", "%s" % type(node.value))
 		v = node.value
 		if isinstance(v, int) or isinstance(v, bool):
-			sm = SynthesisMapper(SM_NUM)
-			sm.q = ConstSignal(v)
+			sm = ConstDriver(v)
 		else:
 			self.raiseError(node, "Unsupported constant")
 		node.syn = sm
@@ -467,8 +496,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		else:
 			if hasattr(node, "value") and isinstance(node.value, int):
 				self.dbg(node, REDBG, "possible accessing module wide variable", node.id)
-				sm = SynthesisMapper(SM_NUM)
-				sm.q = ConstSignal(node.value)
+				sm = ConstDriver(node.value)
 			elif node.id in m.memories:
 				mdesc = m.memories[node.id]
 				sm = SynthesisMapper(SM_MEMPORT)
@@ -500,7 +528,20 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		obj = node.value.obj
 
 		if isinstance(node.slice, ast.Slice):
-			self.accessSlice(node)
+			# Special case of intbv slicing upon assignment:
+			if isinstance(obj, intbv):
+				if len(obj) == 0:
+					if node.slice.upper:
+						downto = node.slice.upper.n
+					else:
+						downto = 0
+					n = node.slice.lower.n - downto
+					node.syn = ConstDriver(obj, n)
+					self.dbg(node, REDBG, "SEQUENTIAL", "len %d, n %d" % (node.syn.q.size(), n))
+				else:
+					z = input("##- UNSUPPORTED for i in func() statement: HIT RETURN")
+			else:
+				self.accessSlice(node)
 		elif isinstance(obj, _Rom):
 			self.visit(node.value)
 			print(node.slice.value)
