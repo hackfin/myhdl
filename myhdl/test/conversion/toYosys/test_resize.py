@@ -76,6 +76,15 @@ def run_test(tb, cycles = 2000):
 	tb.quit_sim() # Quit so we can run another one
 	return True
 
+@block
+def mapped_wrapper(uut, clk, ce, reset, mode, data_out, data_in):
+	"Cosimulation object for yosys post-synthesis(mapping) verilog output"
+	args = locals()
+	name = uut.__name__ + "_mapped"
+	del args['uut']
+
+	return setupCosimulation(name, False, args)
+
 def check_resize_vectors(succeed, uut, din, imm, m, dout):
 	arst = False
 	syn = mapped_wrapper

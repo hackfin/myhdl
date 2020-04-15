@@ -153,9 +153,14 @@ class Design:
 		ys.run_pass("write_verilog %s_mapped.v" % name, design)
 
 	def test_synth(self):
-		ys.run_pass("hierarchy -check")
-		ys.run_pass("techmap -map techmap/lutrams_map.v")
-		ys.run_pass("proc")
+		design = self.design
+		ys.run_pass("write_ilang %s_mapped.il" % self.name, design)
+		ys.run_pass("memory_collect", design)
+		ys.run_pass("techmap -map techmap/lutrams_map.v", design)
+		# ys.run_pass("techmap -map ecp5/brams_map.v", design)
+		# ys.run_pass("techmap -map ecp5/cells_map.v", design)
+		ys.run_pass("hierarchy -check", design)
+
 
 
 class Wire:
@@ -197,7 +202,7 @@ class Const:
 		elif isinstance(value, bool):
 			self.const = ys.Const(int(value), 1)
 		elif isinstance(value, str):
-			self.const = ys.Const(value)
+			self.const = ys.Const("\\" + value)
 		else:
 			raise Synth_Nosupp("Unsupported type %s" % type(value).__name__)
 
@@ -294,10 +299,17 @@ class Cell:
 		self.cell = cell
 
 	def setPort(self, name, port):
+		if isinstance(port, int):
+			port = ConstSignal(port, 32)
+		elif isinstance(port, bool):
+			port = ConstSignal(int(port), 1)
 		self.cell.setPort(PID(name), port)
 
 	def setParam(self, name, c):
-		self.cell.setParam(PID(name), Const(c).get())
+		if isinstance(c, int):
+			self.cell.setParam(PID(name), Const(c, 32).get())
+		else:
+			self.cell.setParam(PID(name), Const(c).get())
 
 class Module:
 	"Yosys module wrapper"
@@ -338,6 +350,7 @@ class Module:
 	def __init__(self, m, implementation):
 		self.module = m
 		self.wires = {} # Local module wires
+		self.cache_mem = {}
 		self.variables = {}
 		self.wiring = {}
 		self.parent_signals = {}
@@ -592,9 +605,17 @@ class Module:
 			print("MEMORY", m[0], m[1])
 			self.memories[m[0]] = ( m[1] )
 
+	def addMemory(self, name):
+		mem = ys.Memory()
+		mem.name = PID(name)
+		self.cache_mem[PID(name)] = mem
+
+		return mem
+
 	def infer_rom(self, romobj, sig_data, sig_addr):
 		"Infer ROM using the blackbox synthesis method"
-		intf = BBInterface("rom_" + romobj.name, self)
+		name = "rom_" + romobj.name
+		intf = BBInterface(name, self)
 
 		sm = SynthesisMapper(SM_WIRE)
 		
@@ -605,6 +626,11 @@ class Module:
 		outs = intf.getOutputs()
 		sm.q = outs[0]
 		return sm
+
+	def finish(self, design):
+		self.module.memories = self.cache_mem
+		mname = self.name.str()
+		# self.module.check()
 
 def dump(n):
 	if isinstance(n, ast.Num):
@@ -1369,28 +1395,29 @@ class BBInterface:
 		"This is a hack for now, as we support one output per assignment only"
 		return [ self.main_out ]
 
+	def addConst(self, val, len = 32):
+		if isinstance(val, int):
+			return ConstSignal(val, len)
+		else:
+			return ConstSignal(val)
+
 	def addWire(self, sig, out = False):
 		m = self.module
 		if isinstance(sig, _Signal):
 			s = len(sig)
+			# self.name + '_' + sig._name
 			w = m.addWire(None, s, True)
 			sigspec = ys.SigSpec(w.get())
-			if not out:
-				w.get().port_output = True
-				w.get().port_input = False
-			else:
+			if out:
 				# Fixme: Within assign statements, we can have only
 				# one output for now (no record assignments)
 				#
 				self.main_out = sigspec # Record last assigned output
-				w.get().port_output = False
-				w.get().port_input = True
-
 			sigid = sig._name
 			if sigid == None:
 				raise AssertionError("Signal must be named")
 
-			self.interface[sigid] = sigspec
+			self.interface[sigid] = ( sigspec, out )
 		else:
 			raise AssertionError("Not a Signal")
 			
@@ -1408,14 +1435,15 @@ class BBInterface:
 		"When defer == True, do not connect outputs"
 		m = self.module
 		for n, i in self.interface.items():
+			s, direction = i
 			sig = m.findWireByName(n)
-			w = i.as_wire()
+			w = s.as_wire()
 			# Reversed!
-			if w.port_output:
-				m.connect(i, sig)
-			elif w.port_input:
+			if direction == 0:
+				m.connect(s, sig)
+			else:
 				if defer:
 					pass
 				else:
-					m.connect(sig, i)
+					m.connect(sig, s)
 		

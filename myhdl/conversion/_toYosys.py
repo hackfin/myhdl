@@ -851,6 +851,7 @@ def infer_rtl(h, instance, design, module_signals):
 	intf.wireup()
 
 	# infer_obj.dump()
+	m.finish(design) # Hack
 
 def wireup(m, c, inst):
 	for n, i in inst.wiring.items():
@@ -952,6 +953,7 @@ def convert_rtl(h, instance, design, module_signals):
 			# z = input("--- HIT RETURN")
 
 			convert_wires(m, c, a, n)
+	m.finish(design) # Hack
 	print("DONE instancing submodules")
 
 def convert_hierarchy(h, func, design, trace = False):
