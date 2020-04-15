@@ -156,7 +156,8 @@ class Design:
 		design = self.design
 		ys.run_pass("write_ilang %s_mapped.il" % self.name, design)
 		ys.run_pass("memory_collect", design)
-		ys.run_pass("techmap -map techmap/lutrams_map.v", design)
+		# We don't test on that level yet
+		# ys.run_pass("techmap -map techmap/lutrams_map.v", design)
 		# ys.run_pass("techmap -map ecp5/brams_map.v", design)
 		# ys.run_pass("techmap -map ecp5/cells_map.v", design)
 		ys.run_pass("hierarchy -check", design)

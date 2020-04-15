@@ -99,6 +99,36 @@ def RomBench(rom):
 
 	return clkgen, stimulus, rom_inst
 
+@block
+def RomBenchDP(rom):
+
+	dout = Signal(intbv(0)[8:])
+	addr = Signal(intbv(1)[8:])
+	clk = Signal(bool(0))
+
+	rom_inst = rom(addr, dout)
+
+	@instance
+	def stimulus():
+		for i in range(D):
+			addr.next = i
+			yield clk.negedge
+			yield clk.posedge
+			yield delay(1)
+			if __debug__:
+				assert dout == ROM[i] ^ ROM[~i]
+			print(dout)
+		raise StopSimulation()
+
+	@instance
+	def clkgen():
+		clk.next = 1
+		while 1:
+			yield delay(10)
+			clk.next = not clk
+
+	return clkgen, stimulus, rom_inst
+
 ############################################################################
 
 class interface:
@@ -107,7 +137,7 @@ class interface:
 		self.data = 8
 
 @block
-def cosim_bench(uut):
+def cosim_bench(uut, bench):
 	"""Cosimulation run for test benches that take a block as argument
 	"""
 
@@ -115,8 +145,8 @@ def cosim_bench(uut):
 	debug0, debug1 = [ Signal(bool()) for i in range(2) ]
 
 	wrapper = CosimObjectWrapper(uut, "addr,dout" )
-	inst_uut = RomBench(wrapper)
-	inst_uut = RomBench(uut)
+	inst_uut = bench(wrapper)
+	inst_uut = bench(uut)
 
 	return instances()
 
@@ -126,15 +156,15 @@ def isig(l):
 def bsig():
 	return Signal(bool())
 
-UUT_LIST =  [ rom1 ]
+UUT_LIST =  [ (rom1, RomBench), (rom2_dp, RomBenchDP) ]
 # UUT_LIST += [ rom2 ]
 
-@pytest.mark.parametrize("uut", UUT_LIST)
-def test_memory(uut):
-	run_tb(cosim_bench(uut), 2000)
+@pytest.mark.parametrize("uut,bench", UUT_LIST)
+def test_memory(uut, bench):
+	run_tb(cosim_bench(uut, bench), 2000)
 
 # Currently unsupported:
-UUT_LIST_FAIL = [ rom1a, rom2_dp ]
+UUT_LIST_FAIL = [ rom1a ]
 
 @pytest.mark.xfail
 @pytest.mark.parametrize("uut", UUT_LIST_FAIL)
