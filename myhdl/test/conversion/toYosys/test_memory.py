@@ -17,7 +17,7 @@ D = 256
 ROM = tuple([randrange(D) for i in range(D)])
 
 @block
-def rom1(addr, dout):
+def rom1(clk, addr, dout):
 	"Asynchronous ROM inference"
 
 	@always_comb
@@ -27,7 +27,7 @@ def rom1(addr, dout):
 	return instances()
 
 @block
-def rom1a(addr, dout):
+def rom1a(clk, addr, dout):
 	"Above variant with explicit integer indexing"
 
 	@always_comb
@@ -48,7 +48,7 @@ def rom2(clk, addr, dout):
 
 
 @block
-def rom2_dp(addr, dout):
+def rom2_dp(clk, addr, dout):
 	"""Synchronous variant, dual ported
 	Is expected to infer one memory initialization, several read ports"""
 
@@ -76,7 +76,7 @@ def RomBench(rom):
 	addr = Signal(intbv(1)[8:])
 	clk = Signal(bool(0))
 
-	rom_inst = rom(addr, dout)
+	rom_inst = rom(clk, addr, dout)
 
 	@instance
 	def stimulus():
@@ -85,9 +85,9 @@ def RomBench(rom):
 			yield clk.negedge
 			yield clk.posedge
 			yield delay(1)
+			print("inst:%s VALUES[%d]" % (rom.name, i), int(dout), hex(ROM[i]))
 			if __debug__:
 				assert dout == ROM[i]
-			print(dout)
 		raise StopSimulation()
 
 	@instance
@@ -106,7 +106,7 @@ def RomBenchDP(rom):
 	addr = Signal(intbv(1)[8:])
 	clk = Signal(bool(0))
 
-	rom_inst = rom(addr, dout)
+	rom_inst = rom(clk, addr, dout)
 
 	@instance
 	def stimulus():
@@ -144,7 +144,8 @@ def cosim_bench(uut, bench):
 	clk = Signal(bool())
 	debug0, debug1 = [ Signal(bool()) for i in range(2) ]
 
-	wrapper = CosimObjectWrapper(uut, "addr,dout" )
+	wrapper = CosimObjectWrapper(uut, "clk,addr,dout")
+	wrapper.trace = True # Trace
 	wrapper.synth_pass = True # Run a synthesis pass
 	inst_uut1 = bench(wrapper)
 	inst_uut2 = bench(uut)
@@ -158,7 +159,7 @@ def bsig():
 	return Signal(bool())
 
 UUT_LIST =  [ (rom1, RomBench), (rom2_dp, RomBenchDP) ]
-# UUT_LIST += [ rom2 ]
+UUT_LIST += [ (rom2, RomBench) ]
 
 @pytest.mark.parametrize("uut,bench", UUT_LIST)
 def test_memory(uut, bench):

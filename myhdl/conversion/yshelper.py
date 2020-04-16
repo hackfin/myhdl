@@ -649,17 +649,21 @@ class Module:
 
 		return mem
 
-	def infer_rom(self, romobj, sig_data, sig_addr):
+	def infer_rom(self, romobj, sig_data, wire_addr):
 		"Infer ROM using the blackbox synthesis method"
 		name = "rom_" + romobj.name
 		intf = BBInterface(name, self)
 
 		sm = SynthesisMapper(SM_WIRE)
-		
+
+		# We need to create (register) a signal descriptor 'addr' for the
+		# blackbox interface
+		sig_addr = intf.createSignal(wire_addr)
 		rom = yosys_bb.Rom(sig_addr, sig_data, romobj.rom)
 		rom.infer(self, intf)
 
-		intf.wireup(True)
+		# Don't wire up
+		# intf.wireup(True)
 		outs = intf.getOutputs()
 		sm.q = outs[0]
 		return sm
@@ -1442,23 +1446,36 @@ class BBInterface:
 		else:
 			return ConstSignal(val)
 
+	def createSignal(self, wire):
+		name = "rom_addr"
+		l = wire.size()
+		sig = myhdl.Signal(intbv()[l:])
+		sig._name = name
+		self.interface[name] = ( wire, False )
+		return sig
+
 	def addWire(self, sig, out = False):
 		m = self.module
 		if isinstance(sig, _Signal):
-			s = len(sig)
-			# self.name + '_' + sig._name
-			w = m.addWire(None, s, True)
-			sigspec = ys.SigSpec(w.get())
-			if out:
-				# Fixme: Within assign statements, we can have only
-				# one output for now (no record assignments)
-				#
-				self.main_out = sigspec # Record last assigned output
 			sigid = sig._name
 			if sigid == None:
 				raise AssertionError("Signal must be named")
 
-			self.interface[sigid] = ( sigspec, out )
+			if sigid in self.interface:
+				print("preassigned wire for '%s'" % sigid)
+				sigspec, _ = self.interface[sigid]
+			else:
+				s = len(sig)
+				# self.name + '_' + sig._name
+				w = m.addWire(None, s, True)
+				sigspec = ys.SigSpec(w.get())
+				if out:
+					# Fixme: Within assign statements, we can have only
+					# one output for now (no record assignments)
+					#
+					self.main_out = sigspec # Record last assigned output
+
+				self.interface[sigid] = ( sigspec, out )
 		else:
 			raise AssertionError("Not a Signal")
 			

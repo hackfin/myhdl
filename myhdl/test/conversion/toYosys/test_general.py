@@ -140,6 +140,7 @@ def cosim_general(uut, args):
 
 
 UUT_LIST = [ (test_intbv_signed.PlainIntbv, self_containing_tb )]
+UUT_LIST += [ (test_intbv_signed.SignedConcat, self_containing_tb )]
 
 @pytest.mark.parametrize("uut,tb", UUT_LIST )
 def test_intbv(uut, tb):

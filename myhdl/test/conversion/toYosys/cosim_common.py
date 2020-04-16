@@ -160,6 +160,7 @@ from a uniform test bench interface"""
 		self.use_assert = use_assert
 		self.design = yshelper.Design(name)
 		self.synth_pass = False # Run a synthesis pass
+		self.trace = False
 
 
 	@block
@@ -169,14 +170,14 @@ from a uniform test bench interface"""
 		l = self.strargs.split(',')
 		name = self.func.__name__
 		inst_uut = self.func(*args)
-		inst_uut.convert("yosys_module", self.design, name=name, trace=False)
+		inst_uut.convert("yosys_module", self.design, name=name, trace=self.trace)
 		if self.synth_pass:
 			self.design.test_synth()
 		self.design.write_verilog(name, True)
 
 		d = {}
-		for i in args:
-			d[l[i]] = i
+		for e, i in enumerate(args):
+			d[l[e]] = i
 
 		return setupCosimulation(self.name + '_mapped', self.use_assert, d)
 

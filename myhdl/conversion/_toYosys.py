@@ -101,7 +101,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			val = ast.literal_eval(node)
 			sm = ConstDriver(int(val))
 			self.dbg(node, REDBG, "UNOP type", "%s" % (node.operand))
-		elif isinstance(node.operand, _Signal):
+		else:
 			self.dbg(node, BLUEBG, "UNARY_OP", "%s" % (node.op))
 			self.visit(a)
 
@@ -110,9 +110,6 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			sm.q = m.addSignal(None, l)
 			name = NEW_ID(__name__, node, "unop")
 			m.apply_unop(name, node.op, a.syn.q, sm.q)
-		else:
-			self.dbg(node, REDBG, "UNHANDLED_UNOP_TYPE", "%s" % type(node.operand))
-			raise Synth_Nosupp("Can't handle this YET")
 
 		node.syn = sm
 			
@@ -142,7 +139,6 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 
 		self.visit(lhs)
 		# print("lhs", lhs.value)
-		self.dbg(node, REDBG, "DEBUG_XX", "type: %s" % (type(rhs)))
 		self.visit(rhs)
 
 		t = SM_WIRE
@@ -163,7 +159,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			if isinstance(node.value.value.obj, _Rom) and isinstance(node.value.slice, ast.Index):
 				self.dbg(node, BLUEBG, "DETECT", "found ROM %s" % (node.value.value.obj))
 				rom = node.value.value.obj
-				sm = self.context.infer_rom(rom, lhs.obj, node.value.slice.value.obj)
+				sm = self.context.infer_rom(rom, lhs.obj, rhs.syn.q)
 			else:
 				src = rhs.syn.q
 		else:
@@ -205,12 +201,17 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				dst = lhs.syn.q
 					
 			else:
-				self.dbg(node, BLUEBG, "ASSIGN", "assign '%s' to Signal type %s" % (drvname, type(lhs.obj)))
+				# self.dbg(node, BLUEBG, "ASSIGN", "assign '%s' to Signal type %s" % (drvname, type(lhs.obj)))
 				dst = self.findWire(lhs)
 		elif isinstance(lhs.obj, intbv):
 			# POTENTIALLY_SEQUENTIAL
 			if hasattr(lhs, 'syn'):
-				dst = lhs.syn.q
+				if isinstance(lhs, ast.Subscript):
+					name = lhs.value.id
+					self.variables[name] = rhs.syn
+					sm = rhs.syn
+				else:
+					self.raiseError(node, "Unhandled type %s", type(lhs))
 			else:
 				self.raiseError(node, "No new assignment with sliced var")
 		else:
@@ -254,6 +255,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			self.visit(arg)
 			src = arg.syn.q
 			# src.extend_u0(src.size(), True)
+			self.dbg(node, BLUEBG, "\tTYPE", "%s" % (type(arg)))
 			self.dbg(node, GREEN, "SIGNED NUM", "len:%d" % (src.size()))
 			arg.syn.is_signed = True
 			node.syn = arg.syn # Pass on
@@ -539,12 +541,12 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 					node.syn = ConstDriver(obj, n)
 					self.dbg(node, REDBG, "SEQUENTIAL", "len %d, n %d" % (node.syn.q.size(), n))
 				else:
-					z = input("##- UNSUPPORTED for i in func() statement: HIT RETURN")
+					self.accessSlice(node)
 			else:
 				self.accessSlice(node)
 		elif isinstance(obj, _Rom):
-			self.visit(node.value)
-			print(node.slice.value)
+			self.visit(node.slice)
+			node.syn = node.slice.value.syn
 		elif isinstance(obj, (list, tuple)):
 			self.visit(node.value)
 			node.syn = node.value.syn # Pass on
