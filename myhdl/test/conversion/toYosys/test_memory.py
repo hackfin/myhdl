@@ -166,10 +166,10 @@ def test_memory(uut, bench):
 	run_tb(cosim_bench(uut, bench), 2000)
 
 # Currently unsupported:
-UUT_LIST_FAIL = [ rom1a ]
+UUT_LIST_FAIL = [ (rom1a, RomBench) ]
 
 @pytest.mark.xfail
-@pytest.mark.parametrize("uut", UUT_LIST_FAIL)
-def test_memory_fail(uut, args):
-	run_tb(cosim_bench(uut), 2000)
+@pytest.mark.parametrize("uut,bench", UUT_LIST_FAIL)
+def test_memory_fail(uut, bench):
+	run_tb(cosim_bench(uut, bench), 2000)
 

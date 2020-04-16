@@ -100,21 +100,6 @@ def cosim_stim(uut):
 
 
 @block
-def cosim_bench(uut, bench):
-	"""Cosimulation run for test benches that take a block as argument
-	"""
-
-	clk = Signal(bool())
-	debug0, debug1 = [ Signal(bool()) for i in range(2) ]
-
-	wrapper = CosimObjectWrapper(uut, "", None, True)
-	print(wrapper.use_assert)
-	inst_uut1 = bench(wrapper, clk, debug0)
-	inst_uut2 = bench(uut, clk, debug1)
-
-	return instances()
-
-@block
 def cosim_general(uut, args):
 	"""Cosimulation run for general tests
 
@@ -141,6 +126,7 @@ def cosim_general(uut, args):
 
 UUT_LIST = [ (test_intbv_signed.PlainIntbv, self_containing_tb )]
 UUT_LIST += [ (test_intbv_signed.SignedConcat, self_containing_tb )]
+UUT_LIST += [ (test_intbv_signed.SlicedSigned, self_containing_tb )]
 
 @pytest.mark.parametrize("uut,tb", UUT_LIST )
 def test_intbv(uut, tb):
@@ -155,10 +141,34 @@ def test_intbv(uut, tb):
 	wrapper = SelfContainingTb(tb, uut)
 	run_tb(cosim_stim(wrapper), 2000)
 
+@block
+def cosim_bench(uut, bench, param):
+	"""Cosimulation run for test benches that take a block as argument
+	"""
+
+	clk = Signal(bool())
+	debug0, debug1 = [ Signal(bool()) for i in range(2) ]
+
+	wrapper = CosimObjectWrapper(uut, "width,bin2gray")
+	wrapper.trace = True # Trace
+	wrapper.synth_pass = True # Run a synthesis pass
+	inst_uut1 = bench(param, wrapper)
+	inst_uut2 = bench(param, uut)
+
+	return instances()
+
+
+
+UUT_LIST_PARAM = [ (test_bin2gray.bin2gray, test_bin2gray.bin2grayBench, 8) ]
+
+@pytest.mark.xfail
+@pytest.mark.parametrize("uut,bench,param", UUT_LIST_PARAM)
+def test_memory_fail(uut, bench, param):
+	run_tb(cosim_bench(uut, bench, param), 2000)
+
 # Those are not supported yet until sequential (@instance) support is
 # implemented
-UUT_LIST_INST_X = [ (test_intbv_signed.SlicedSigned, self_containing_tb )]
-UUT_LIST_INST_X += [ (test_intbv_signed.SignedConcat, self_containing_tb )]
+UUT_LIST_INST_X = [] 
 
 @pytest.mark.xfail
 @pytest.mark.parametrize("uut,tb", UUT_LIST_INST_X )
@@ -176,7 +186,6 @@ def test_unsupported_sequential(uut, tb):
 
 fsm_signals = (Signal(bool(0)), Signal(test_fsm.t_State_b.SEARCH), Signal(bool(0)), Signal(bool(0)), Signal(bool(1)), test_fsm.t_State_b)
 
-# UUT_LIST = [ (test_bin2gray.bin2grayBench, ( 8, test_bin2gray.bin2gray )) ]
 # UUT_LIST = [ (test_fsm.FramerCtrl, fsm_signals) ]
 
 UUT_LIST_X = [ (test_toplevel_interfaces.tb_top_level_interfaces, None) ]

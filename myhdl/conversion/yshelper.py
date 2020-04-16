@@ -996,7 +996,7 @@ Used for separation of common functionality of visitor classes"""
 		self.visit(node.value)
 		node.obj = self.getObj(node.value)
 		if hasattr(node.value, "syn"):
-			self.dbg(node, BLUEBG, "PASS ON ASSIGN ",  "obj: " + repr(node.value))
+			self.dbg(node, BLUEBG, "PASS ON ASSIGN ",  "sig: " + repr(node.value.id))
 			node.syn = node.value.syn # pass on
 
 	def getAttr(self, node):
@@ -1064,16 +1064,30 @@ Used for separation of common functionality of visitor classes"""
 		sm.q = sig.extract(i, n)
 		node.syn = sm
 
+	def get_index(self, idx):
+		if isinstance(idx, ast.Name):
+			i = self.loopvars[idx.id]
+		elif isinstance(idx, ast.Num):
+			i = idx.n
+		elif hasattr(idx, 'value'):
+			i = idx.value
+		else:
+			self.raiseError(idx, "Unhandled type %s" % type(idx))
+
+		return i
+
 	def accessIndex(self, node):
 		sm = SynthesisMapper(SM_WIRE)
+		self.visit(node.slice)
 		self.visit(node.value)
-		try:
-			sig = node.value.syn.q
-		except AttributeError:
-			self.raiseError(node, "%s Has no index" % type(node.value.obj))
+		idx = node.slice.value
+		obj = node.value.obj
 
-		i = node.slice.value.n
+		i = self.get_index(idx)
+
+		sig = node.value.syn.q
 		sm.q = sig.extract(i, 1)
+
 		node.syn = sm
 
 	def findWire(self, node):

@@ -25,6 +25,8 @@ from myhdl import intbv, concat, delay
 
 from myhdl._blackbox import _BlackBox
 
+# Allow support of not nice legacy:
+__legacy__ = True
 
 try:
 	from myhdl.conversion.yshelper import *
@@ -53,6 +55,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		self.context = context
 		self.tree = tree
 		self.variables = { }
+		self.loopvars = { }
 		self.depth = 0
 		self.state = S_NEUTRAL
 		self.cur_enable = None
@@ -65,12 +68,16 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		self.depth -= 1
 
 	def visit_BinOp(self, node):
+		"""This supports synthesizeable types as well as local variables
+		on the fly. This is a bit of a hack and could be done nicer by
+		a procedural analysis."""
 		m = self.context
 		a, b = node.left, node.right
 		self.visit(a)
 		self.visit(b)
 
-		try:
+		# Did we synthesize?
+		if hasattr(a, 'syn') and hasattr(b, 'syn'):
 			if a.syn.isConst() and b.syn.isConst():
 				sm = SynthesisMapper(SM_WIRE)
 				self.dbg(node, BLUEBG, "BINOP CONST EXPR", "%s" % (node.op))
@@ -78,16 +85,12 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				sm.q = ConstSignal(res, res.bit_length())
 				del a.syn, b.syn
 			else:
-				try:
-					sm = m.apply_binop(node, a.syn, b.syn)
-				except AttributeError:
-					self.dbg(node, REDBG, "FAILURE", "Attribute failure, a: %s b: %s" % (type(a), type(b)))
-					raise AssertionError
-		except:
-			self.dbg(node, REDBG, "FAILURE", "Attribute failure, a: %s b: %s" % (type(a), type(b)))
-			raise AssertionError
-
-		node.syn = sm
+				sm = m.apply_binop(node, a.syn, b.syn)
+			node.syn = sm
+		else:
+			# Assume we're constant
+			res = self.const_eval(node)
+			node.value = res # Hack: set .value for get_index()
 
 #	def visit_BoolOp(self, node):
 #		pass
@@ -209,17 +212,24 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				if isinstance(lhs, ast.Subscript):
 					name = lhs.value.id
 					self.variables[name] = rhs.syn
-					sm = rhs.syn
+					sm = lhs.syn
 				else:
-					self.raiseError(node, "Unhandled type %s", type(lhs))
+					self.raiseError(node, "Unhandled type %s" % type(lhs))
 			else:
 				self.raiseError(node, "No new assignment with sliced var")
+		elif isinstance(lhs.obj, bool):
+			if isinstance(lhs, ast.Subscript):
+				name = lhs.value.id
+				i = self.get_index(lhs.slice.value)
+				sig_dst = self.variables[name].q
+				self.dbg(node, BLUEBG, "REPLACE", " %s[%d] by %s" % (name, i, "new"))
+				sig_dst.replace(i, rhs.syn.q)
+				dst = sig_dst
 		else:
 			self.dbg(node, REDBG, "UNHANDLED", "type %s" % (type(lhs.obj)))
 			raise Synth_Nosupp("Can't handle this YET")
 
 		# Handle synthesis mapping / resizes:
-
 
 		if not sm:
 			print("dst: %d  src: %d" % (dst.size(), src.size()))
@@ -393,19 +403,35 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		"""A for loop just instances an up/down counter and tracks the
 		yield statements to try to infer something"""
 		print(_n())
-#		var = node.target.id
-#        cf = node.iter
-#        f = self.getObj(cf.func)
-#        args = cf.args
-#        assert len(args) <= 3
-#        self.require(node, len(args) < 3, "explicit step not supported")
-#        self.require(node, len(args) > 0, "at least one argument requested")
-#
-#        if f is range:
-#
-#        else:  # downrange
+		var = node.target.id
+		cf = node.iter
+		f = self.getObj(cf.func)
+		args = cf.args
+		assert len(args) <= 3
+		self.require(node, len(args) < 3, "explicit step not supported")
+		self.require(node, len(args) > 0, "at least one argument requested")
 
-		z = input("##- UNSUPPORTED for i in func() statement: HIT RETURN")
+		if f is range:
+			if len(args) == 1:
+				b = args[0]
+				a = 0
+			else:
+				a, b = args
+			print(args)
+			if not isinstance(a, int):
+				a = a.value
+			if not isinstance(b, int):
+				b = b.value
+
+			self.dbg(node, BLUEBG, "UP ", " (%s) %d .. %d" % (var, a, b))
+	
+			for i in range(a, b):
+				self.loopvars[var] = i
+				self.visit_stmt(node.body)
+
+		else:
+			self.raiseError(node, "Unsupported down range")
+
 
 	def manageEdges(self, ifnode, senslist):
 		""" Helper method to convert MyHDL style template into VHDL style"""
@@ -490,6 +516,9 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		elif node.id in self.tree.vardict:
 			if node.id in self.variables:
 				node.syn = self.variables[node.id]
+			elif node.id in self.loopvars:
+				val = self.loopvars[node.id]
+				node.value = val # Stick cur value into .value
 			else:
 				sm = SynthesisMapper(SM_VAR)
 				self.variables[node.id] = None
@@ -531,15 +560,18 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 
 		if isinstance(node.slice, ast.Slice):
 			# Special case of intbv slicing upon assignment:
+			# TODO: Move into accessSlice()
 			if isinstance(obj, intbv):
 				if len(obj) == 0:
 					if node.slice.upper:
 						downto = node.slice.upper.n
 					else:
 						downto = 0
-					n = node.slice.lower.n - downto
+
+					self.generic_visit(node.slice.lower)
+					print(dir(node.slice.lower))
+					n = node.slice.lower.obj - downto
 					node.syn = ConstDriver(obj, n)
-					self.dbg(node, REDBG, "SEQUENTIAL", "len %d, n %d" % (node.syn.q.size(), n))
 				else:
 					self.accessSlice(node)
 			else:
@@ -554,8 +586,11 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			# Memory parameters:
 			node.syn.memid = node.value.id
 			node.syn.addrsig = node.slice.value.obj
-		else:
+		elif isinstance(obj, (_Signal, intbv) ):
 			self.accessIndex(node)
+		else:
+			self.dbg(node, REDBG, "UNHANDLED INDEX", type(v))
+			raise Synth_Nosupp("Can't handle this YET")
 	
 
 	def visit_stmt(self, body):
@@ -746,6 +781,20 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 					pass
 				elif isinstance(lhs.obj, _Signal):
 					self.handle_toplevel_assignment(stmt)				
+				# Allow legacy assignment inside always_comb:
+				elif isinstance(lhs, ast.Subscript):
+					rhs = stmt.value
+					# Legacy allows lhs.value to be an attribute.
+					if __legacy__:
+						if isinstance(lhs.value, ast.Attribute):
+							self.dbg(stmt, REDBG, "LEGACY_ASSIGN", rhs.syn.q)
+							m.connect(lhs.syn.q, rhs.syn.q)
+					else:
+						name = lhs.value.id
+						self.variables[name] = rhs.obj
+				elif isinstance(lhs, ast.Attribute):
+					self.dbg(stmt, REDBG, "UNSUPPORTED ATTR ASSIGN", type(lhs.obj))
+					raise Synth_Nosupp("Can't handle attr assignment YET")
 				else:
 					self.dbg(stmt, REDBG, "UNHANDLED ASSIGN", type(lhs))
 					raise AssertionError
