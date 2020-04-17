@@ -1,27 +1,25 @@
 # Dockerfile for yosys synthesis cosimulation test suite
 #
 
-FROM debian:buster-slim
-
+FROM python:3.7-slim
 RUN apt-get update --allow-releaseinfo-change ; \
-	apt-get install -y make git wget bzip2 \
-	python3-distutils python3-pytest \
-	screen gnupg sudo pkg-config autoconf libtool iverilog graphviz
-
+	apt-get install -y wget gnupg iverilog graphviz
 
 RUN wget -qO - https://section5.ch/section5-apt.key | apt-key add - 
 RUN echo "deb http://section5.ch/debian buster non-free" > /etc/apt/sources.list.d/section5.list
 
+RUN pip install --no-cache notebook
+
 RUN apt-get update ; \
 	apt-get install -y yosys-pyosys
 
-RUN useradd -u 1000 -g 100 -m -s /bin/bash pyosys 
+ARG NB_USER
+ARG NB_UID
+ENV USER ${NB_USER}
+ENV HOME /home/${NB_USER}
 
-RUN adduser pyosys sudo
-RUN echo "pyosys ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/pyosys-nopw
-
-USER pyosys
-RUN install -d /home/pyosys/scripts/recipes
-RUN wget https://raw.githubusercontent.com/hackfin/myhdl/to_yosys/scripts/recipes/myhdl.mk -O /home/pyosys/scripts/recipes/myhdl.mk
-WORKDIR /home/pyosys
-
+RUN adduser --disabled-password \
+    --gecos "Default user" \
+    --uid ${NB_UID} \
+    ${NB_USER}
+WORKDIR ${HOME}
