@@ -27,6 +27,6 @@ COPY . ${HOME}
 USER root
 RUN chown -R ${NB_UID} ${HOME}
 USER ${NB_USER}
-RUN echo "PYTHONPATH=$HOME/myhdl:/usr/lib/python3.7/dist-packages" >> ${HOME}/.bashrc
+RUN echo "export JUPYTER_PATH=${JUPYTER_PATH}:$HOME/myhdl:/usr/lib/python3.7/dist-packages" > ${HOME}/.bashrc
 
 WORKDIR ${HOME}
