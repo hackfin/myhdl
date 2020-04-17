@@ -3,7 +3,7 @@
 
 FROM python:3.7-slim
 RUN apt-get update --allow-releaseinfo-change ; \
-	apt-get install -y wget gnupg iverilog graphviz
+	apt-get install -y wget gnupg iverilog graphviz python-pygraphviz
 
 RUN wget -qO - https://section5.ch/section5-apt.key | apt-key add - 
 RUN echo "deb http://section5.ch/debian buster non-free" > /etc/apt/sources.list.d/section5.list
