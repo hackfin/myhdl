@@ -237,7 +237,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				self.dbg(node, REDBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
 				src.extend_u0(dst.size(), rhs.syn.is_signed)
 			elif dst.size() < src.size():
-				if rhs.syn.carry:
+				if rhs.syn.trunc:
 					self.dbg(node, REDBG, "TRUNC", "Implicit carry truncate: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
 					src = src.extract(0, dst.size())
 				else:
@@ -371,7 +371,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 
 			if hasattr(node, "isFullCase"):
 				if node.isFullCase:
-					self.mapToMux(node, True)
+					self.mapToPmux(node, True)
 				else:
 					# print("SYNC_MAP_MUX")
 					self.mapToMux(node, True)
@@ -679,6 +679,7 @@ class _ConvertAlwaysDecoVisitor(_ConvertVisitor):
 			self.clkpol = clkpol
 			# print(clk)
 		else:
+			self.dbg(node, REDBG, "PROCESS_UNHANDLED", "%s() :" % self.tree.name)
 			raise Synth_Nosupp("Can't handle this YET")
 
 		self.handle_toplevel_process(node, handle_dff, clk, clkpol)
