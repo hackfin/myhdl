@@ -1,7 +1,7 @@
 MyHDL 0.11-yosys
 ================
 
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/hackfin/myhdl.git/jupyosys?filepath=example%2Fipynb%2Findex.ipynb)
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/hackfin/myhdl.git/jupyosys?filepath=src%2Fmyhdl%2Fmyhdl-yosys%2Fexample%2Fipynb%2Findex.ipynb)
 
 This is an UNSTABLE development branch for experimenting with direct synthesis via yosys. For testing, start the binder via the above button.
 
