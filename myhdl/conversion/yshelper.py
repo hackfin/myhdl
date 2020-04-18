@@ -5,6 +5,7 @@
 import ast
 import inspect
 import myhdl
+import os
 
 from myhdl._enum import EnumType, EnumItemType
 from myhdl import ConversionError
@@ -79,7 +80,7 @@ class SynthesisMapper:
 	def __init__(self, el_type, is_signed = False):
 		self.el_type = el_type
 		self.q = None
-		self.carry = False # Carry flag
+		self.trunc = False # True when truncation allowed
 		self.is_signed = is_signed
 
 	def isConst(self):
@@ -227,6 +228,8 @@ class Const:
 			self.const = ys.Const(int(value), 1)
 		elif isinstance(value, str):
 			self.const = ys.Const("\\" + value)
+		elif isinstance(value, EnumItemType):
+			self.const = ys.Const(int(value), value._nrbits)
 		else:
 			raise Synth_Nosupp("Unsupported type %s" % type(value).__name__)
 
@@ -350,7 +353,7 @@ class Cell:
 class Module:
 	"Yosys module wrapper"
 
-	EX_COND, EX_SAME, EX_CARRY, EX_TWICE = range(4)
+	EX_COND, EX_SAME, EX_CARRY, EX_TWICE, EX_TRUNC = range(5)
 
 	_unopmap = {
 		ast.USub	 :   ys.Module.addNeg,
@@ -363,7 +366,7 @@ class Module:
 		ast.Sub		 : ( ys.Module.addSub,	 EX_SAME ),
 		ast.Mult	 : ( ys.Module.addMul,	 EX_TWICE ),
 		ast.Div		 : ( ys.Module.addDiv,	 EX_SAME ),
-		ast.Mod		 : ( ys.Module.addMod,	 EX_SAME ),
+		ast.Mod		 : ( ys.Module.addMod,	 EX_TRUNC ),
 		ast.Pow		 : ( ys.Module.addPow,	 EX_SAME ),
 		ast.LShift	 : ( ys.Module.addShl,	 EX_SAME ),
 		ast.RShift	 : ( ys.Module.addShr,	 EX_SAME ),
@@ -433,9 +436,11 @@ class Module:
 			l = 1
 		elif ext == self.EX_TWICE:
 			l *= 2
+		elif ext == self.EX_TRUNC:
+			sm.trunc = True
 		elif ext == self.EX_CARRY:
 			l += 1
-			sm.carry = True
+			sm.trunc = True
 
 		# print("Add wire with name %s, size %d" % (name, l))
 		sm.q = self.addSignal(None, l)
@@ -450,6 +455,7 @@ class Module:
 
 	def connect(self, dst, src):
 		if dst.size() != src.size():
+			print(dst.size(), src.size())
 			raise ValueError("Signals '%s' and '%s' don't have the same size" % (dst.as_wire().name, src.as_wire().name))
 		return self.module.connect(dst, src)
 
@@ -577,13 +583,18 @@ class Module:
 			w = self.addWire(name, s, True)
 			w.get().port_input = True
 			d[name] = Signal(w)
+		elif isinstance(arg, EnumType):
+			print("\tENUM %s" % arg)
 		elif arg == None:
 			pass
 		else:
 			print("Bus/Port class %s" % name)
-			for i in arg.__dict__.items():
-				print(".%s" % (i[0]))
-				self.collectArg(name + "_" + i[0], i[1])
+			try:
+				for i in arg.__dict__.items():
+					print(".%s" % (i[0]))
+					self.collectArg(name + "_" + i[0], i[1])
+			except AttributeError:
+				raise ValueError("Unhandled object type %s for %s" % (type(arg), name))
 			
 
 
@@ -985,7 +996,7 @@ Used for separation of common functionality of visitor classes"""
 
 	def genid(self, node, ext):
 		n = self.cur_module + "::" + type(node).__name__
-		srcfile = self.tree.sourcefile[self.tree.sourcefile.rfind('/'):]
+		srcfile = os.path.basename(self.tree.sourcefile)
 		src = "%s:%d" % (srcfile, node.lineno + self.tree.lineoffset)
 		return OBJ_ID(n, src, ext)
 
@@ -996,7 +1007,7 @@ Used for separation of common functionality of visitor classes"""
 		self.visit(node.value)
 		node.obj = self.getObj(node.value)
 		if hasattr(node.value, "syn"):
-			self.dbg(node, BLUEBG, "PASS ON ASSIGN ",  "obj: " + repr(node.value))
+			self.dbg(node, BLUEBG, "PASS ON ASSIGN ",  "sig: " + repr(node.value.id))
 			node.syn = node.value.syn # pass on
 
 	def getAttr(self, node):
@@ -1064,16 +1075,32 @@ Used for separation of common functionality of visitor classes"""
 		sm.q = sig.extract(i, n)
 		node.syn = sm
 
+	def get_index(self, idx):
+		if isinstance(idx, ast.Name):
+			i = self.loopvars[idx.id]
+		elif isinstance(idx, ast.Num):
+			i = idx.n
+		elif hasattr(idx, 'value'):
+			i = idx.value
+		else:
+			self.raiseError(idx, "Unhandled type %s" % type(idx))
+
+		return i
+
 	def accessIndex(self, node):
 		sm = SynthesisMapper(SM_WIRE)
+		self.visit(node.slice)
 		self.visit(node.value)
+		idx = node.slice.value
+		obj = node.value.obj
+
+		i = self.get_index(idx)
 		try:
 			sig = node.value.syn.q
 		except AttributeError:
-			self.raiseError(node, "%s Has no index" % type(node.value.obj))
-
-		i = node.slice.value.n
+			self.raiseError(node, "Unsynthesized argument %s" % type(obj))
 		sm.q = sig.extract(i, 1)
+
 		node.syn = sm
 
 	def findWire(self, node):
