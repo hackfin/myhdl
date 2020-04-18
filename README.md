@@ -1,7 +1,10 @@
 MyHDL 0.11-yosys
 ================
 
-This is an UNSTABLE development branch for experimenting with direct synthesis via yosys.
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/hackfin/myhdl.git/jupyosys?filepath=example%2Fipynb%2Findex.ipynb)
+
+This is an UNSTABLE development branch for experimenting with direct synthesis via yosys. For testing, start the binder via the above button.
+
 Yet quite undocumented and work in progress, see `test/conversion/toYosys/test_*.py` for examples.
 
 Based on 'upgrade' branch:
@@ -21,7 +24,7 @@ Some basic tests are enabled in the continuous integration to verify a sane buil
 These currently use a different GHDL release than the travis CI setup from the master repository
 (https://github.com/myhdl/myhdl).
 
-See also 'Docker support' below.
+See also 'Docker support' below. This specific branch builds a Binder environment from the provided Dockerfile.
 
 ------------------------
 
