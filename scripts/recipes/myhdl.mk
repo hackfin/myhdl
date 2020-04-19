@@ -5,7 +5,7 @@ all: install
 $(MYHDL_UPSTREAM):
 	[ -e $(dir $@) ] || install -d $(dir $@)
 	cd $(dir $@) && \
-	git clone -b jupyosys https://github.com/hackfin/myhdl $(notdir $@)
+	git clone -b to_yosys https://github.com/hackfin/myhdl $(notdir $@)
 
 install: $(MYHDL_UPSTREAM)
 	$(MAKE) -C $(MYHDL_UPSTREAM)/cosimulation/icarus all
