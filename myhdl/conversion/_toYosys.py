@@ -232,9 +232,9 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		# Handle synthesis mapping / resizes:
 
 		if not sm:
-			print("dst: %d  src: %d" % (dst.size(), src.size()))
+			# print("dst: %d  src: %d" % (dst.size(), src.size()))
 			if dst.size() > src.size():
-				self.dbg(node, REDBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
+				self.dbg(node, BLUEBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
 				src.extend_u0(dst.size(), rhs.syn.is_signed)
 			elif dst.size() < src.size():
 				if rhs.syn.trunc:
@@ -353,16 +353,16 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				if isinstance(stmt, ast.If):
 					self.visit(stmt)
 
-			self.dbg(node, BLUEBG, "TIE_DEFAULT", "VISIT")
+			# self.dbg(node, BLUEBG, "TIE_DEFAULT", "VISIT")
 
 			for n, i in node.syn.drivers.items():
 				other = i[1]
 				if other:
-					self.dbg(node, REDBG, "TIE_DEFAULT", "Tie to default signal %s" % n)
+					# self.dbg(node, REDBG, "TIE_DEFAULT", "Tie to default signal %s" % n)
 					defsig = self.context.findWireByName(n)
 					self.context.connect(other, defsig)
-				else:
-					self.dbg(node, REDBG, "TIE_DEFAULT", "Signal has default: %s" % n)
+				# else:
+				# 	self.dbg(node, REDBG, "TIE_DEFAULT", "Signal has default: %s" % n)
 		else:
 			prev = self.state
 			self.state = S_MUX
@@ -693,10 +693,10 @@ class _ConvertAlwaysSeqVisitor(_ConvertVisitor):
 
 	def visit_FunctionDef(self, node, *args):
 		def handle_dff(m, stmt, reset, clk, clkpol = True):
-			print("Look for clk '%s'" % clk._name)
+			# print("Look for clk '%s'" % clk._name)
 			clk = m.findWireByName(clk._name)
 			for name, sig in stmt.syn.drivers.items():
-				print("\t driver '%s'" % name)
+				# print("\t driver '%s'" % name)
 				gsig = m.findWireByName(name)
 				l = gsig.size()
 				sig_ff = m.addSignal(PID(name + "_ff"), l)
@@ -760,9 +760,10 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 	def visit_FunctionDef(self, node):
 		self.cur_module = node.name
 		# a local function works nicely too
-		print("Sensitivity list for %s:" % node.name)
-		for e in self.tree.senslist:
-			print('\t', e)
+		if self.debug:
+			print("Sensitivity list for %s:" % node.name)
+			for e in self.tree.senslist:
+				print('\t', e)
 
 		m = self.context
 
@@ -774,7 +775,7 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 					print("wire %s:" % name)
 					gsig = m.findWireByName(name)
 					m.connect(gsig, sig[0])
-					self.dbg(stmt, REDBG, "DRIVERS", name)
+					self.dbg(stmt, BLUEBG, "DRIVERS", name)
 			elif isinstance(stmt, ast.Assign):
 				lhs = stmt.targets[0]
 				# Variable assignments are handled inline
@@ -914,17 +915,15 @@ def infer_handle_interface(design, instance, parent_wires):
 	# print("ARGS", blk.args)
 	# print("ARGN", argnames)
 
-	print("TOP LEVEL SIGNALS")
 	impl = blk
 	for i, n in enumerate(argnames):
 		try:
 			a = impl.args[i]
-			print(a)
 		except IndexError:
+			print("ERROR, index out of range")
 			print(argnames)
 			print(i, impl.args)
 			# raise AssertionError
-	print("---- DONE ----")
 
 	instance.symdict = parent_wires # XXX
 	m.collectWires(instance, argnames)
@@ -1007,13 +1006,13 @@ def convert_rtl(h, instance, design, module_signals):
 		v.dbg(tree, GREEN, "-------", "")
 		v.visit(tree)
 
-		print("OUTPUTS of %s" % tree.name)
-		for i in tree.outputs:
-			print("\t" + i)
-		
-		print("INPUTS")
-		for i in tree.inputs:
-			print("\t" + i)
+#		print("OUTPUTS of %s" % tree.name)
+#		for i in tree.outputs:
+#			print("\t" + i)
+#		
+#		print("INPUTS")
+#		for i in tree.inputs:
+#			print("\t" + i)
 	
 		# z = input("##- HIT RETURN")
 

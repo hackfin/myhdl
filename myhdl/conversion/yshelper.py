@@ -242,7 +242,7 @@ class Const:
 			self.const = ys.Const(v, bits)
 		else:
 			bitvector = bitfield(v)
-			print("long val %x[%d]" % (int(value), bits))
+			# print("long val %x[%d]" % (int(value), bits))
 			self.const = ys.Const(bitvector, bits)
 
 	def get(self):
@@ -282,10 +282,10 @@ def dump_sig(x):
 	
 
 def expandinterface(v, name, obj):
-	print("|| expand class", name)
+	# print("|| expand class", name)
 	for attr, attrobj in vars(obj).items():
 		if isinstance(attrobj, _Signal):
-			print("\t--	 %s_%s : %s" % (name, attr, dump_sig(attrobj)))
+			# print("\t--	 %s_%s : %s" % (name, attr, dump_sig(attrobj)))
 			#					  signame = attrobj._name
 			#					  if not signame:
 			#						  signame = name + '_' + attr
@@ -294,7 +294,7 @@ def expandinterface(v, name, obj):
 #			  signame = name + attr
 				
 			oldname = attrobj._name
-			print("\trename local '.%s' : %s <= %s ORIGINAL '%s'" % (attr, oldname, signame, attrobj._origname))
+			# print("\trename local '.%s' : %s <= %s ORIGINAL '%s'" % (attr, oldname, signame, attrobj._origname))
 			attrobj._name = signame
 			
 			# check if already in
@@ -311,8 +311,8 @@ def expandinterface(v, name, obj):
 
 def infer_interface(blk):
 	"Our own interface inferring, preserving wiring hierarchy"
-	print(76 * '=')
-	print("INFER INTERFACE for %s" % blk.func.__name__)
+	# print(76 * '=')
+	# print("INFER INTERFACE for %s" % blk.func.__name__)
 	tree = _makeAST(blk.func)
 	v = _AnalyzeTopFuncVisitor(blk.func, tree, *blk.args, **blk.kwargs)
 	v.visit(tree)
@@ -506,7 +506,7 @@ class Module:
 			elif identifier in self.wiring:
 				elem = self.wires[self.wiring[identifier][0]]
 			elif identifier in self.parent_signals:
-				print(">>>>> LOOKUP PARENT (FALLBACK):  %s" % identifier)
+				# print(">>>>> LOOKUP PARENT (FALLBACK):  %s" % identifier)
 				elem = self.parent_signals[identifier]
 			else:
 				elem = None
@@ -523,7 +523,7 @@ class Module:
 		elif identifier in self.wiring:
 			elem = self.wires[self.wiring[identifier][0]]
 		elif identifier in self.parent_signals:
-			print(">>>>> LOOKUP PARENT (FALLBACK):  %s" % identifier)
+			# print(">>>>> LOOKUP PARENT (FALLBACK):  %s" % identifier)
 			elem = self.parent_signals[identifier]
 		else:
 			elem = None
@@ -547,7 +547,7 @@ class Module:
 			# TODO: Clock signal could be flagged for debugging purposes
 			# Currently, it tends to be regarded as 'floating'
 			if is_out:
-				print("\tWire OUT (%s) %s, parent: %s, driver: %s" % (arg._driven, name, pname, src))
+				# print("\tWire OUT (%s) %s, parent: %s, driver: %s" % (arg._driven, name, pname, src))
 				w.get().port_output = True
 				# If we need to create a register, replace this wire
 				if arg._driven == "reg":	
@@ -557,10 +557,10 @@ class Module:
 					self.connect(buf, sig)
 
 			elif arg._read:
-				print("\tWire IN %s, parent %s, origin: %s" % (name, pname, src))
+				# print("\tWire IN %s, parent %s, origin: %s" % (name, pname, src))
 				w.get().port_input = True
 			else:
-				print("\tWire FLOATING %s, parent %s" % (name, pname))
+				# print("\tWire FLOATING %s, parent %s" % (name, pname))
 				# FIXME
 				# For now, we allocate this port as a dummy, anyway
 				# Also note: clk ports are not properly marked as 'read'
@@ -571,12 +571,13 @@ class Module:
 			self.defaults[name] = arg._init
 			d[name] = sig
 		elif isinstance(arg, int):
-			print("\tConst Wire %s" % name)
+			# print("\tConst Wire %s" % name)
 			d[name] = ConstSignal(arg, arg.bit_length())
 		elif isinstance(arg, bool):
 			d[name] = ConstSignal(arg, 1)
 		elif isinstance(arg, block):
-			print("\tSKIP block arg %s" % arg)
+			# print("\tSKIP block arg %s" % arg)
+			pass
 		elif isinstance(arg, intbv):
 			# print("Const signal Wire IN %s" % (name))
 			s = len(arg)
@@ -584,14 +585,15 @@ class Module:
 			w.get().port_input = True
 			d[name] = Signal(w)
 		elif isinstance(arg, EnumType):
-			print("\tENUM %s" % arg)
+			# print("\tENUM %s" % arg)
+			pass
 		elif arg == None:
 			pass
 		else:
-			print("Bus/Port class %s" % name)
+			# print("Bus/Port class %s" % name)
 			try:
 				for i in arg.__dict__.items():
-					print(".%s" % (i[0]))
+					# print(".%s" % (i[0]))
 					self.collectArg(name + "_" + i[0], i[1])
 			except AttributeError:
 				raise ValueError("Unhandled object type %s for %s" % (type(arg), name))
@@ -604,7 +606,7 @@ class Module:
 			if isinstance(s._val, EnumItemType):
 				d[n] = self.addSignal(n, s._nrbits)
 			else:
-				print("%s Wire %s type %s, init: %d" % (wtype, n, repr(s._type), s._init))
+				# print("%s Wire %s type %s, init: %d" % (wtype, n, repr(s._type), s._init))
 				l = get_size(s)
 				d[n] = self.addSignal(n, l)
 
@@ -616,10 +618,10 @@ class Module:
 		sigs = instance.sigdict
 
 		l = len(blk.args)
-		print("# of block arguments:", l)
+		# print("# of block arguments:", l)
 
 		for i, name in enumerate(args):
-			print("ARG", name)
+			# print("ARG", name)
 			if name in sigs:
 				sig = sigs[name]
 				self.collectArg(name, sig)
@@ -631,7 +633,7 @@ class Module:
 
 		ps = self.parent_signals
 
-		print("----- PARENT/LOCAL CONTEXT -----")
+		# print("----- PARENT/LOCAL CONTEXT -----")
 
 		# Collect parent signals:
 		for n, s in instance.symdict.items():
@@ -650,7 +652,7 @@ class Module:
 
 	def collectMemories(self, instance):
 		for m in instance.memdict.items():
-			print("MEMORY", m[0], m[1])
+			# print("MEMORY", m[0], m[1])
 			self.memories[m[0]] = ( m[1] )
 
 	def addMemory(self, name):
@@ -708,7 +710,7 @@ def mux_input(x, templ):
 		else:
 			raise AssertionError("Not of same size")
 	else:
-		print(type(x))
+		# print(type(x))
 		x = x.syn.q
 
 	return x
@@ -825,7 +827,7 @@ class Instance:
 		
 
 	def analyze_signals(self, symdict):
-		print(GREEN + "Analyze signals for %s" % self + OFF)
+		# print(GREEN + "Analyze signals for %s" % self + OFF)
 		sigdict = self.sigdict
 		memdict = self.memdict
 		siglist = []
@@ -840,16 +842,17 @@ class Instance:
 			if s._name is not None:
 				# For local signal dictionary, create port wiring map:
 				self.wiring[s._name] = (n, s)
-				print("WIRE %s <--- %s (%s)" % (n, s._name, s._origname))
+				# print("WIRE %s <--- %s (%s)" % (n, s._name, s._origname))
 				continue
 			if isinstance(s, _SliceSignal):
 				continue
 			sname = _makeName(n, [], namedict)
 			if s._origname:
-				print("New Name %s <= %s (%s)" % (n, sname, s._origname))
+				# print("New Name %s <= %s (%s)" % (n, sname, s._origname))
 				symdict[s._origname] = s
 			else:
-				print("New local signal name %s <= %s (%s)" % (n, sname, s._origname))
+				# print("New local signal name %s <= %s (%s)" % (n, sname, s._origname))
+				pass
 			s._name = sname
 			if not s._nrbits:
 				raise ConversionError(_error.UndefinedBitWidth, s._name)
@@ -915,7 +918,6 @@ differing instances of the same architecture"""
 			impl = modinst.func.__name__
 			# Create some 'hash' according to interface specs
 			key = create_key(modinst)
-			print("insert key %s" % key)
 
 			subs = [(s.name, s) for s in modinst.subs]
 			inst = Instance(level, modinst, subs)
@@ -1037,7 +1039,7 @@ Used for separation of common functionality of visitor classes"""
 				# pre, suf = self.inferCast(node.vhd, node.vhdOri)
 				self.visit(node.value)
 		elif isinstance(obj, (_Signal, intbv)):
-			print("INTBV SIGNAL")
+			# print("INTBV SIGNAL")
 			if node.attr in ('min', 'max'):
 				pre, suf = self.inferCast(node.vhd, node.vhdOri)
 		elif isinstance(obj, EnumType):
@@ -1135,8 +1137,6 @@ Used for separation of common functionality of visitor classes"""
 			else:
 				c.parameters[PID("CLK_POLARITY")] = 0
 
-		else:
-			print("ASYNC MEM PORT")
 		c.parameters[PID("MEMID")] = port.memid
 		c.parameters[PID("ABITS")] = len(port.addrsig)
 		c.parameters[PID("WIDTH")] = data_w
@@ -1219,7 +1219,7 @@ Used for separation of common functionality of visitor classes"""
 					for sigid, drv in t.syn.drivers.items():
 						if sigid in casemap:
 							self.dbg(t, MARK, "DRV",  "%s has default. Driver entry: %s" % (sigid, drv))
-							print("previous:", casemap[sigid])
+							# print("previous:", casemap[sigid])
 							self.context.connect(drv[1], casemap[sigid][0])
 							casemap[sigid].insert(0, drv[0])
 						else:
@@ -1232,7 +1232,7 @@ Used for separation of common functionality of visitor classes"""
 		return sources
 
 	def mapToPmux(self, node, sync = False):
-		print("MAP_PMUX %d" % len(node.tests))
+		# print("MAP_PMUX %d" % len(node.tests))
 		m = self.context
 		cc = m.addSignal(None, 0)
 
@@ -1250,7 +1250,7 @@ Used for separation of common functionality of visitor classes"""
 			self.dbg(test, GREEN, "\n-- CASEMAP PMUX --", "parallel multiplexer map output:")
 
 			for n, item in casemap.items():
-				print("   %s ===> %s" % (n, repr(i)))
+				# print("   %s ===> %s" % (n, repr(i)))
 				target = m.findWireByName(n)
 
 				if not n in muxmap:
@@ -1264,7 +1264,7 @@ Used for separation of common functionality of visitor classes"""
 	
 		elseclause = node.else_
 		if elseclause:
-			print(GREEN + "OTHERS" + OFF)
+			# print(GREEN + "OTHERS" + OFF)
 			elsemap = {}
 			self.handle_mux_statement(True, elseclause, elsemap)
 
@@ -1280,8 +1280,8 @@ Used for separation of common functionality of visitor classes"""
 			varray = m.addSignal(None, 0)
 			for j in item:
 				if j:
-					self.dbg(t, REDBG, "MUX_INPUT",  "create mux input " + wn + " type %s" % type(w))
-					print("Width:", w.size())
+					self.dbg(t, BLUEBG, "MUX_INPUT",  "create mux input " + wn + " type %s" % type(w))
+					# print("Width:", w.size())
 					varray.append(j)
 						
 					
@@ -1290,7 +1290,7 @@ Used for separation of common functionality of visitor classes"""
 			name = NEW_ID(__name__, node, "pmux")
 
 
-			self.dbg(t, REDBG, "MUX_INPUT",  "create mux input " + wn + " type %s" % type(w))
+			self.dbg(t, BLUEBG, "MUX_INPUT",  "create mux input " + wn + " type %s" % type(w))
 
 			if wn in other_map:
 				a = other_map[wn]
@@ -1326,7 +1326,7 @@ Used for separation of common functionality of visitor classes"""
 			elif isinstance(cond, Wire):
 				s = Signal(cond)
 			else:
-				print(type(cond))
+				# print(type(cond))
 				raise Synth_Nosupp("Unsupported MapMux selector type ")
 
 			self.handle_mux_statement(cond, stmt, casemap)
@@ -1366,7 +1366,7 @@ Used for separation of common functionality of visitor classes"""
 			elsemap = {}
 			self.handle_mux_statement(True, elseclause, elsemap)
 
-			self.dbg(node, REDBG, "\n\n-- ELSE CASE --", "multiplexer map output:")
+			# self.dbg(node, REDBG, "\n\n-- ELSE CASE --", "multiplexer map output:")
 
 			for n, i in elsemap.items():
 				# print("	%s ===> %s" % (n, repr(i)))
@@ -1489,7 +1489,7 @@ class BBInterface:
 				raise AssertionError("Signal must be named")
 
 			if sigid in self.interface:
-				print("preassigned wire for '%s'" % sigid)
+				# print("preassigned wire for '%s'" % sigid)
 				sigspec, _ = self.interface[sigid]
 			else:
 				s = len(sig)
