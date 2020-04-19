@@ -20,8 +20,8 @@ def up_counter(clk, ce, reset, counter):
 
 @block
 def simple_expr(clk, ce, reset, dout, debug):
+	"Simple static expressions"
 	counter = Signal(modbv(0)[8:])
-	d = Signal(intbv(3)[2:])
 
 	ctr = up_counter(clk, ce, reset, counter)
 
@@ -35,9 +35,55 @@ def simple_expr(clk, ce, reset, dout, debug):
 	return instances()
 
 @block
-def process_variables(clk, ce, reset, dout, debug):
+def proc_expr(clk, ce, reset, dout, debug):
+	"Simple procedural expressions inside concurrent process, 'for' loops"
 	counter = Signal(modbv(0)[8:])
-	d = Signal(intbv(3)[2:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_comb
+	def assign():
+		tmp = intbv(0xaa)[8:]
+		for i in range(4):
+			tmp[i*2] = counter[i]
+			tmp[i*2+1] = counter[i+4]
+		dout.next = tmp
+
+	return instances()
+
+
+@block
+def assign_slice_legacy(clk, ce, reset, dout, debug):
+	"Legacy style element assignment"
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_comb
+	def assign():
+		dout.next[0] = counter[0]
+
+	return instances()
+
+@block
+def assign_slice_new(clk, ce, reset, dout, debug):
+	"New 'nice' way of assigning a slice next"
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_comb
+	def assign():
+		b = counter
+		dout[0].next = b[0]
+
+	return instances()
+
+
+@block
+def process_variables(clk, ce, reset, dout, debug):
+	"Usage of variables inside process"
+	counter = Signal(modbv(0)[8:])
 
 	ctr = up_counter(clk, ce, reset, counter)
 
@@ -53,8 +99,8 @@ def process_variables(clk, ce, reset, dout, debug):
 
 @block
 def module_variables(clk, ce, reset, dout, debug):
+	"Module wide variables"
 	counter = Signal(modbv(0)[8:])
-	d = Signal(intbv(3)[2:])
 
 	a = 144
 
@@ -75,6 +121,7 @@ def module_variables(clk, ce, reset, dout, debug):
 
 @block
 def simple_arith(clk, ce, reset, dout, debug):
+	"Simple arithmetics test"
 	counter = Signal(modbv(0)[8:])
 
 	case = Signal(modbv()[8:])
@@ -105,10 +152,10 @@ def simple_arith(clk, ce, reset, dout, debug):
 
 @block
 def simple_cases(clk, ce, reset, dout, debug):
+	"A few simple cases, to be extended"
 	counter = Signal(modbv(0)[8:])
 
 	ctr = up_counter(clk, ce, reset, counter)
-
 	
 	@always_comb
 	def select():
@@ -150,12 +197,12 @@ def simple_resize_cases(clk, ce, reset, dout, debug):
 		else:
 			dout.next = 0
 
-
 	return instances()
 
 
 @block
 def counter_extended(clk, ce, reset, dout, debug):
+	"Extended counter example"
 	counter = Signal(modbv(0)[8:])
 	x = Signal(modbv()[4:])
 	y = Signal(modbv()[4:])
@@ -236,7 +283,6 @@ def lfsr8_1(clk, ce, reset, dout, debug):
 def fail_elif(clk, ce, reset, dout, debug):
 	"Failing MUX case"
 	counter = Signal(modbv(0)[8:])
-	d = Signal(intbv(3)[2:])
 	@always_seq(clk.posedge, reset)
 	def worker():
 		if ce:
@@ -275,12 +321,12 @@ def unused_pin(clk, ce, reset, dout, debug):
 # Tests
 
 
-UUT_LIST = [ simple_expr, process_variables, module_variables,
+UUT_LIST = [ simple_expr, proc_expr, process_variables, module_variables,
 	simple_arith, simple_cases, simple_resize_cases, lfsr8_1, counter_extended]
 
 UUT_LIST += [ unused_pin ]
 
-UUT_UNRESOLVED_LIST = [ fail_elif ]
+UUT_UNRESOLVED_LIST = [ fail_elif, assign_slice_legacy, assign_slice_new ]
 
 @pytest.mark.parametrize("uut", UUT_LIST)
 def test_mapped_uut(uut):

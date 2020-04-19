@@ -177,6 +177,7 @@ from a uniform test bench interface"""
 
 		d = {}
 		for e, i in enumerate(args):
+			print("arg %d: %s" % (e, i))
 			d[l[e]] = i
 
 		return setupCosimulation(self.name + '_mapped', self.use_assert, d)
