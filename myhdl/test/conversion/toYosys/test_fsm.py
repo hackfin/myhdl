@@ -104,6 +104,7 @@ def test_fsm(uut):
     run_tb(tb_unit(uut, mapped_uut, arst), 20000)
 
 
+@pytest.mark.xfail
 @pytest.mark.parametrize("uut", UUT_LIST_FAIL)
 def test_fsm_yet_incomplete(uut):
     arst = False
