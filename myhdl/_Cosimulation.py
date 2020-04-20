@@ -41,6 +41,10 @@ _error.NoCommunication = "No signals communicating to myhdl"
 _error.SimulationEnd = "Premature simulation end"
 _error.OSError = "OSError"
 
+def dump_stdout(child):
+    print("==== COSIM stdout ====")
+    print(child.communicate()[0].decode('utf8'))
+
 
 class Cosimulation(object):
 
@@ -90,7 +94,7 @@ class Cosimulation(object):
 
 
         try:
-            sp = subprocess.Popen(exe, env=env, close_fds=False)
+            sp = subprocess.Popen(exe, env=env, close_fds=False, stdout=subprocess.PIPE)
         except OSError as e:
             raise CosimulationError(_error.OSError, str(e))
 
@@ -101,6 +105,7 @@ class Cosimulation(object):
         while 1:
             s = to_str(os.read(rt, _MAXLINE))
             if not s:
+                dump_stdout(self._child)
                 raise CosimulationError(_error.SimulationEnd)
             e = s.split()
             if e[0] == "FROM":
@@ -143,6 +148,7 @@ class Cosimulation(object):
             return
         buf = to_str(os.read(self._rt, _MAXLINE))
         if not buf:
+            dump_stdout(self._child)
             raise CosimulationError(_error.SimulationEnd)
         e = buf.split()
         for i in range(1, len(e), 2):
