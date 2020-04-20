@@ -35,6 +35,24 @@ def simple_expr(clk, ce, reset, dout, debug):
 	return instances()
 
 @block
+def simple_reset_expr(clk, ce, reset, dout, debug):
+	"Simple static expressions"
+	q = Signal(modbv(0)[8:])
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_seq(clk.posedge, reset)
+	def worker():
+		q.next = counter
+
+	@always_comb
+	def assign():
+		dout.next = q
+
+	return instances()
+
+@block
 def proc_expr(clk, ce, reset, dout, debug):
 	"Simple procedural expressions inside concurrent process, 'for' loops"
 	counter = Signal(modbv(0)[8:])
@@ -321,7 +339,7 @@ def unused_pin(clk, ce, reset, dout, debug):
 # Tests
 
 
-UUT_LIST = [ simple_expr, proc_expr, process_variables, module_variables,
+UUT_LIST = [ simple_expr, simple_reset_expr, proc_expr, process_variables, module_variables,
 	simple_arith, simple_cases, simple_resize_cases, lfsr8_1, counter_extended]
 
 UUT_LIST += [ unused_pin ]
