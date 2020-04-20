@@ -1151,6 +1151,15 @@ Used for separation of common functionality of visitor classes"""
 			self.visit(stmt)
 			if isinstance(stmt, ast.If):
 				func(m, stmt, reset, clk, clkpol)
+			elif isinstance(stmt, ast.Assign):
+				lhs = stmt.targets[0]
+				n = lhs.obj._name
+				# Ugly: ad-hoc insert drivers:
+				self.dbg(stmt, REDBG, "SEQ_STMT", type(clk))
+				stmt.syn.drivers = { n : [stmt.syn.q, None] }
+				func(m, stmt, reset, clk, clkpol)
+			else:
+				self.dbg(stmt, REDBG, "HANDLE OTHER", stmt)
 
 	def handle_toplevel_process(self, node, func, clk, clkpol):
 		"Handle top level processes"

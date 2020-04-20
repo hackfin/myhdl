@@ -35,6 +35,24 @@ def simple_expr(clk, ce, reset, dout, debug):
 	return instances()
 
 @block
+def simple_reset_expr(clk, ce, reset, dout, debug):
+	"Simple static expressions"
+	q = Signal(modbv(0)[8:])
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_seq(clk.posedge, reset)
+	def worker():
+		q.next = counter
+
+	@always_comb
+	def assign():
+		dout.next = q
+
+	return instances()
+
+@block
 def proc_expr(clk, ce, reset, dout, debug):
 	"Simple procedural expressions inside concurrent process, 'for' loops"
 	counter = Signal(modbv(0)[8:])
@@ -115,8 +133,6 @@ def module_variables(clk, ce, reset, dout, debug):
 			dout.next = 0
 
 	return instances()
-
-
 
 
 @block
@@ -321,22 +337,24 @@ def unused_pin(clk, ce, reset, dout, debug):
 # Tests
 
 
-UUT_LIST = [ simple_expr, proc_expr, process_variables, module_variables,
-	simple_arith, simple_cases, simple_resize_cases, lfsr8_1, counter_extended]
+# UUT_LIST = [ simple_expr, simple_reset_expr, proc_expr, process_variables, module_variables,
+#	simple_arith, simple_cases, simple_resize_cases, lfsr8_1, counter_extended]
 
-UUT_LIST += [ unused_pin ]
+# UUT_LIST += [ unused_pin ]
+
+UUT_LIST = [ simple_reset_expr ]
 
 UUT_UNRESOLVED_LIST = [ fail_elif, assign_slice_legacy, assign_slice_new ]
 
 @pytest.mark.parametrize("uut", UUT_LIST)
 def test_mapped_uut(uut):
 	arst = False
-	run_conversion(uut, arst, None, False) # No wrapper, no display
+	run_conversion(uut, arst, None, True) # No wrapper, no display
 	run_tb(tb_unit(uut, mapped_uut, arst), 20000)
 
 @pytest.mark.xfail
 @pytest.mark.parametrize("uut", UUT_UNRESOLVED_LIST)
-def test_unresolved(uut):
+def _test_unresolved(uut):
 	arst = False
 	run_conversion(uut, arst, None, True) # No wrapper, display
 	run_tb(tb_unit(uut, mapped_uut, arst), 20000)
