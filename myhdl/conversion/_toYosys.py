@@ -17,7 +17,7 @@ from myhdl._compat import StringIO
 from myhdl.conversion._misc import (_error, _kind, _context,
 									_ConversionMixin, _Label, _genUniqueSuffix, _isConstant)
 
-from myhdl.conversion.analyze_ng import (_analyzeGens,  _makeName,
+from myhdl.conversion.analyze_ng import (_analyzeGens,	_makeName,
 									   _Ram, _Rom, _enumTypeSet, _slice_constDict)
 
 
@@ -362,7 +362,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 					defsig = self.context.findWireByName(n)
 					self.context.connect(other, defsig)
 				# else:
-				# 	self.dbg(node, REDBG, "TIE_DEFAULT", "Signal has default: %s" % n)
+				#	self.dbg(node, REDBG, "TIE_DEFAULT", "Signal has default: %s" % n)
 		else:
 			prev = self.state
 			self.state = S_MUX
@@ -507,10 +507,16 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 	def visit_Name(self, node):
 		m = self.context
 		# Try to find a wire first:
+		is_signed = False
+
+		if isinstance(node.obj, _Signal):
+			min = node.obj.min
+			if min:
+				is_signed = min < 0
 		
 		w = m.findWireByName(node.id)
 		if w:
-			sm = SynthesisMapper(SM_WIRE)
+			sm = SynthesisMapper(SM_WIRE, is_signed)
 			sm.q = w
 			node.syn = sm
 		elif node.id in self.tree.vardict:
@@ -973,12 +979,12 @@ def convert_rtl(h, instance, design, module_signals):
 
 	m.collectMemories(instance)
 
-	print(76 * '=')
-	print("CONVERT_RTL instance '%s' " % instance.name)
+	# print(76 * '=')
+	# print("CONVERT_RTL instance '%s' " % instance.name)
 
 	# Visit generators:
 	for tree in instance.genlist:
-		print("CONVERT_RTL tree >>>>>> '%s' " % tree.name)
+		# print("CONVERT_RTL tree >>>>>> '%s' " % tree.name)
 		if tree.kind == _kind.ALWAYS:
 			Visitor = _ConvertAlwaysVisitor
 		elif tree.kind == _kind.INITIAL:
@@ -993,8 +999,8 @@ def convert_rtl(h, instance, design, module_signals):
 			Visitor = _ConvertAlwaysCombVisitor
 
 		v = Visitor(m, tree)
-		v.dbg(tree, GREEN, "SYMBOLS", tree.name)
-#		for sym, node  in tree.symdict.items():
+#		v.dbg(tree, GREEN, "SYMBOLS", tree.name)
+# #		for sym, node  in tree.symdict.items():
 #			if isinstance(node, _Signal):
 #				if hasattr(node, "obj"):
 #					print(sym, node.obj)
@@ -1003,7 +1009,7 @@ def convert_rtl(h, instance, design, module_signals):
 #			else:
 #				pass
 #				# print(sym, type(node))
-		v.dbg(tree, GREEN, "-------", "")
+#		v.dbg(tree, GREEN, "-------", "")
 		v.visit(tree)
 
 #		print("OUTPUTS of %s" % tree.name)
@@ -1064,7 +1070,7 @@ def convert_hierarchy(h, func, design, trace = False):
 	symdict = {}
 
 	for inst in h.hierarchy:
-		print(GREEN + "========================================================" + OFF)
+		# print(GREEN + "========================================================" + OFF)
 		l = []
 		block_instances = []
 		for nm, elem in inst.subs:

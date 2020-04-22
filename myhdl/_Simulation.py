@@ -99,10 +99,13 @@ class Simulation(object):
     def _finalize(self):
         cosims = self._cosims
         if cosims:
+            print(cosims)
             for cosim in cosims:
                 os.close(cosim._rt)
                 os.close(cosim._wf)
                 cosim._child.wait()
+            self._cosims = [] # In case we finalize twice,
+            # like from a StopSimulation event
         if _simulator._tracing:
             _simulator._tracing = 0
             _simulator._tf.close()

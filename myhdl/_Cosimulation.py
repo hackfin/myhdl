@@ -41,10 +41,6 @@ _error.NoCommunication = "No signals communicating to myhdl"
 _error.SimulationEnd = "Premature simulation end"
 _error.OSError = "OSError"
 
-def dump_stdout(child):
-    print("==== COSIM stdout ====")
-    print(child.communicate()[0].decode('utf8'))
-
 
 class Cosimulation(object):
 
@@ -75,6 +71,7 @@ class Cosimulation(object):
         self._toSigDict = toSigDict = {}
         self._hasChange = 0
         self._getMode = 1
+        self.capture = False
 
         env = os.environ.copy()
 
@@ -94,7 +91,11 @@ class Cosimulation(object):
 
 
         try:
-            sp = subprocess.Popen(exe, env=env, close_fds=False, stdout=subprocess.PIPE)
+            if self.capture:
+                sp = subprocess.Popen(exe, env=env, close_fds=False, \
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            else:
+                sp = subprocess.Popen(exe, env=env, close_fds=False)
         except OSError as e:
             raise CosimulationError(_error.OSError, str(e))
 
@@ -105,7 +106,7 @@ class Cosimulation(object):
         while 1:
             s = to_str(os.read(rt, _MAXLINE))
             if not s:
-                dump_stdout(self._child)
+                self.dump_output()
                 raise CosimulationError(_error.SimulationEnd)
             e = s.split()
             if e[0] == "FROM":
@@ -148,7 +149,7 @@ class Cosimulation(object):
             return
         buf = to_str(os.read(self._rt, _MAXLINE))
         if not buf:
-            dump_stdout(self._child)
+            self.dump_output()
             raise CosimulationError(_error.SimulationEnd)
         e = buf.split()
         for i in range(1, len(e), 2):
@@ -194,3 +195,17 @@ class Cosimulation(object):
         while 1:
             yield sigs
             self._hasChange = 1
+
+    def dump_output(self):
+        if self.capture:
+            c = self._child.communicate()
+            print("==== COSIM stdout ====")
+            print(c[0].decode('utf8'))
+            try:
+                msg = c[1].decode('utf8')
+                print("==== COSIM stderr ====")
+                print(msg)
+            except:
+                print("==== stderr failed ====")
+
+

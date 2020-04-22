@@ -403,9 +403,6 @@ class Module:
 		return getattr(self.module, name)
 
 	def apply_compare(self, node, a, b):
-		sm = SynthesisMapper(SM_BOOL)
-		sm.q = self.addSignal(None, 1)
-		name = NEW_ID(__name__, node, "cmp")
 		op = node.ops[0]
 
 		# Have to sort out cases:
@@ -416,6 +413,10 @@ class Module:
 			is_signed = True
 		else:
 			is_signed = False
+
+		sm = SynthesisMapper(SM_BOOL)
+		sm.q = self.addSignal(None, 1)
+		name = NEW_ID(__name__, node, "cmp")
 
 		if a.q.size() != b.q.size():
 			raise AssertionError
@@ -430,7 +431,12 @@ class Module:
 
 		f, ext = self._binopmap[type(node.op)]
 
-		sm = SynthesisMapper(SM_WIRE)
+		if a.is_signed or b.is_signed:
+			is_signed = True
+		else:
+			is_signed = False
+
+		sm = SynthesisMapper(SM_WIRE, is_signed)
 
 		if ext == self.EX_COND:
 			l = 1
@@ -446,7 +452,7 @@ class Module:
 		sm.q = self.addSignal(None, l)
 		name = NEW_ID(__name__, node, "binop")
 
-		f(self.module, name, a.q, b.q, sm.q)
+		f(self.module, name, a.q, b.q, sm.q, is_signed)
 
 		return sm
 
@@ -1099,6 +1105,8 @@ Used for separation of common functionality of visitor classes"""
 		i = self.get_index(idx)
 		try:
 			sig = node.value.syn.q
+			# Inherit signedness:
+			sm.is_signed = node.value.syn.is_signed
 		except AttributeError:
 			self.raiseError(node, "Unsynthesized argument %s" % type(obj))
 		sm.q = sig.extract(i, 1)
@@ -1155,7 +1163,6 @@ Used for separation of common functionality of visitor classes"""
 				lhs = stmt.targets[0]
 				n = lhs.obj._name
 				# Ugly: ad-hoc insert drivers:
-				self.dbg(stmt, REDBG, "SEQ_STMT", type(clk))
 				stmt.syn.drivers = { n : [stmt.syn.q, None] }
 				func(m, stmt, reset, clk, clkpol)
 			else:
