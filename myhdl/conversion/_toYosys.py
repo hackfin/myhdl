@@ -17,7 +17,7 @@ from myhdl._compat import StringIO
 from myhdl.conversion._misc import (_error, _kind, _context,
 									_ConversionMixin, _Label, _genUniqueSuffix, _isConstant)
 
-from myhdl.conversion.analyze_ng import (_analyzeGens,	_makeName,
+from myhdl.conversion.analyze_ng import (_analyzeGens,_makeName,
 									   _Ram, _Rom, _enumTypeSet, _slice_constDict)
 
 
@@ -509,7 +509,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		# Try to find a wire first:
 		is_signed = False
 
-		if isinstance(node.obj, _Signal):
+		if hasattr(node, 'obj') and isinstance(node.obj, _Signal):
 			min = node.obj.min
 			if min:
 				is_signed = min < 0

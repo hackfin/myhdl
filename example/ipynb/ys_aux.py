@@ -3,11 +3,23 @@
 # (c) 2020 <hackfin@section5.ch>
 #
 import graphviz
+import pydotplus
 import os
 import subprocess
+import myhdl
 from myhdl import *
 # from io import StringIO
+
+import sys
+sys.path.append("examples")
+
 from lfsr8 import lfsr8
+
+# Get installation path of files:
+MYHDL = os.environ["HOME"] + "/src/myhdl"
+
+class VerilogError(Exception):
+	pass
 
 def design_from_entity(ent, async_reset = False):
 	clk = Signal(bool())
@@ -25,7 +37,7 @@ def design_from_entity(ent, async_reset = False):
 
 	return design
 
-def setupCosimulation(name, use_assert, interface):
+def setupCosimulation(name, use_assert, interface, debug = False):
 	# logger = StringIO()
 	tb = "tb_" + name
 	objfile = "%s.o" % name
@@ -34,13 +46,21 @@ def setupCosimulation(name, use_assert, interface):
 	analyze_cmd = ['iverilog', '-g2012']
 	analyze_cmd += ['-o', objfile, '%s.v' % name, '%s.v' % tb]
 	if use_assert:
-		analyze_cmd += ['../../myhdl/test/conversion/toYosys/aux/assert.v']
-	subprocess.call(analyze_cmd)
-	simulate_cmd = ['vvp', '-m', '../../cosimulation/icarus/myhdl.vpi']
-	simulate_cmd += [ objfile ]
-	c = Cosimulation(simulate_cmd, **interface)
-	c.name = name
-	return c
+		analyze_cmd += [MYHDL + '/myhdl/test/conversion/toYosys/aux/assert.v']
+	complete = subprocess.run(analyze_cmd, stderr=subprocess.STDOUT, \
+		stdout = subprocess.PIPE)
+	if complete.returncode:
+		raise VerilogError(complete.stdout.decode('utf8'))
+	else:
+		simulate_cmd = ['vvp', '-m', MYHDL + '/cosimulation/icarus/myhdl.vpi']
+		simulate_cmd += [ objfile ]
+		if debug:
+			print("Analyze command:", " ".join(analyze_cmd))
+			print("Simulation command:", " ".join(simulate_cmd))
+		c = Cosimulation(simulate_cmd, **interface)
+		c.capture = True # Capture output
+		c.name = name
+		return c
 
 @block
 def clkgen(clk, DELAY):
@@ -74,7 +94,7 @@ def tb_unit(uut, uut_syn, async_reset):
 	def stimulus():
 		# errcount = 0
 		reset.next = 1
-		yield(delay(200))
+		yield(delay(4))
 		reset.next = 0
 		while 1:
 			yield clk.posedge
@@ -97,12 +117,18 @@ def mapped_uut_assert(which, clk, ce, reset, dout, debug):
 	return setupCosimulation(name, True, args)
 
 
-def to_svg(design, which = ""):
+def to_svg(design, which = "", scale=100):
 	print("Generating RTL image...")
 	design.display_rtl(which, fmt="dot")
 
-	f = open(design.name + ".dot")
-	dot_graph = f.read()
+	graph = pydotplus.graphviz.graph_from_dot_file(design.name + ".dot")
+	v = 10 * scale // 100
+
+	if isinstance(graph, list):
+		print("Warning: several graphs in file, using first")
+		graph = graph[0]
+	graph.set_size('"%d,%d!"' % (v, v))
+
+	return graphviz.Source(graph.to_string())
 
 
-	return graphviz.Source(dot_graph)

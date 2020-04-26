@@ -99,7 +99,6 @@ class Simulation(object):
     def _finalize(self):
         cosims = self._cosims
         if cosims:
-            print(cosims)
             for cosim in cosims:
                 os.close(cosim._rt)
                 os.close(cosim._wf)

@@ -371,7 +371,6 @@ class _Block(object):
 # and not require a yosys installation
 		elif hdl.lower() == 'yosys_module':
 			converter = myhdl.conversion._toYosys.toYosysModule
-			print("Setting context", context)
 			setattr(converter, 'design', context)
 		else:
 			raise BlockInstanceError('unknown hdl %s' % hdl)
