@@ -33,7 +33,7 @@ import inspect
 import functools
 from myhdl._util import _flatten
 from myhdl._instance import _Instantiator
-from myhdl import BlockError, BlockInstanceError, Cosimulation
+from myhdl import BlockError, BlockInstanceError, CosimulationPipe
 
 BLUEBG = "\033[7;34m"
 OFF = "\033[0m"
@@ -97,7 +97,7 @@ class _BlackBox(_Block):
 	def _verifySubs(self):
 		for inst in self.subs:
 			_debug(type(inst))
-			if not isinstance(inst, (_Block, _Instantiator, Cosimulation, SynthesisObject)):
+			if not isinstance(inst, (_Block, _Instantiator, CosimulationPipe, SynthesisObject)):
 				raise BlockError("ERR %s: %s not known" %  (self.name, type(inst)))
 			if isinstance(inst, (_Block, _Instantiator)):
 				if not inst.modctxt:

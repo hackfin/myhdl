@@ -57,8 +57,7 @@ def setupCosimulation(name, use_assert, interface, debug = False):
 		if debug:
 			print("Analyze command:", " ".join(analyze_cmd))
 			print("Simulation command:", " ".join(simulate_cmd))
-		c = Cosimulation(simulate_cmd, **interface)
-		c.capture = True # Capture output
+		c = CosimulationPipe(simulate_cmd, True, **interface)
 		c.name = name
 		return c
 

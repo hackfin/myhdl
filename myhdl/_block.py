@@ -27,7 +27,7 @@ import functools
 
 import myhdl
 from myhdl._compat import PY2
-from myhdl import BlockError, BlockInstanceError, Cosimulation
+from myhdl import BlockError, BlockInstanceError, CosimulationPipe
 from myhdl._instance import _Instantiator
 from myhdl._util import _flatten
 from myhdl._extractHierarchy import (_makeMemInfo,
@@ -239,7 +239,7 @@ class _Block(object):
 
 	def _verifySubs(self):
 		for inst in self.subs:
-			if not isinstance(inst, (_Block, _Instantiator, Cosimulation)):
+			if not isinstance(inst, (_Block, _Instantiator, CosimulationPipe)):
 				raise BlockError(_error.ArgType % (self.name,))
 			if isinstance(inst, (_Block, _Instantiator)):
 				if not inst.modctxt:
@@ -283,7 +283,7 @@ class _Block(object):
 		for inst in self.subs:
 			# the symdict of a block instance is defined by
 			# the call context of its instantiations
-			if isinstance(inst, Cosimulation):
+			if isinstance(inst, CosimulationPipe):
 				continue  # ignore
 			if self.symdict is None:
 				self.symdict = inst.callinfo.symdict
