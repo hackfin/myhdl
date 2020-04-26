@@ -16,7 +16,7 @@ sys.path.append("examples")
 from lfsr8 import lfsr8
 
 # Get installation path of files:
-MYHDL = os.environ["HOME"] + "/src/myhdl"
+MYHDL = os.environ["HOME"] + "/src/myhdl/myhdl-yosys"
 
 class VerilogError(Exception):
 	pass
