@@ -7,11 +7,11 @@ import inspect
 import myhdl
 import os
 
-from myhdl._enum import EnumType, EnumItemType
 from myhdl import ConversionError
 
 from myhdl._util import _makeAST
-from myhdl.conversion.analyze_ng import _AnalyzeTopFuncVisitor, _makeName
+from myhdl.conversion.analyze_ng import _AnalyzeTopFuncVisitor, _makeName, \
+	_slice_constDict
 from myhdl._Signal import _Signal
 from myhdl._block import _Block, block
 from myhdl._blackbox import _BlackBox
@@ -86,6 +86,14 @@ class SynthesisMapper:
 	def isConst(self):
 		return self.el_type == SM_NUM
 
+	def __repr__(self):
+		types = [ "NUM", "BOOL", "STRING", "WIRE", "RECORD", "VAR", "MEMPORT" ]
+		if self.q:
+			identifier = "$"
+		else:
+			identifier = "X"
+		return "[%s: %s]" % (types[self.el_type], identifier)
+
 def ConstDriver(val, bit_len = None):
 	if val < 0:
 		signed = True
@@ -105,10 +113,7 @@ def OBJ_ID(name, src, ext):
 	return ys.IdString("$" + name + "\\" + src + "\\" + ext)
 
 def Signal(x):
-	if isinstance(x, Wire) or isinstance(x, Const):
-		return ys.SigSpec(x.get())
-	else:
-		return ys.SigSpec(x)
+	return ys.SigSpec(x.get())
 
 def ConstSignal(x, l = None):
 	c = Const(x, l)
@@ -141,6 +146,10 @@ class Design:
 
 	def top_module(self):
 		return Module(self.design.top_module(), None)
+
+	def run(self, cmd):
+		"Careful. This function can exit without warning"
+		ys.run_pass(cmd, design)
 
 	def display_rtl(self, selection = "", fmt = None, full = False):
 		"Display first stage RTL"
@@ -180,6 +189,7 @@ class Design:
 		else:
 			# Can cause failures in cosim: TODO investigate
 			ys.run_pass("write_verilog -norename %s_mapped.v" % name, design)
+
 
 	def test_synth(self):
 		design = self.design
@@ -386,6 +396,12 @@ class Module:
 		ast.Or		 : ( ys.Module.addOr,	 EX_SAME )
 	}
 
+	_boolopmap = {
+		ast.And	     : ys.Module.addReduceAnd,
+		ast.Or       : ys.Module.addReduceOr,
+		ast.Not	     : ys.Module.addNot
+	}
+
 	def __init__(self, m, implementation):
 		self.module = m
 		self.wires = {} # Local module wires
@@ -465,6 +481,12 @@ class Module:
 			raise ValueError("Signals '%s' and '%s' don't have the same size" % (dst.as_wire().name, src.as_wire().name))
 		return self.module.connect(dst, src)
 
+	def guard_name(self, name, which):
+		if name in self.guard:
+			raise KeyError("%s already used : %s" % (name, repr(self.guard[name])))
+		self.guard[name] = which
+
+
 	def addWire(self, name, n, public=False):
 		# print(type(name))
 		if isinstance(name, str):
@@ -476,15 +498,19 @@ class Module:
 		elif not name:
 			name = ys.new_id(__name__, lineno(), "")
 
-		if name in self.guard:
-			raise KeyError("%s already used : %s" % (name, repr(self.guard[name])))
-		self.guard[name] = public
+		self.guard_name(name, public)
+
 		# print("adding wire '%s'" % (name))
 		return Wire(self.module.addWire(name, n))
 
 	def addSignal(self, name, n, public = False):
 		w = self.addWire(name, n, public)
 		return ys.SigSpec(w.get())
+
+	def addMux(self, *args):
+		name = args[0]
+		self.guard_name(name, True)
+		return self.module.addMux(*args)
 
 	def addCell(self, name, celltype, builtin = False):
 		if builtin:
@@ -1002,10 +1028,18 @@ Used for separation of common functionality of visitor classes"""
 		else:
 			raise AssertionError("Unsupported op")
 
-	def genid(self, node, ext):
-		n = self.cur_module + "::" + type(node).__name__
+	def node_tag(self, node):
 		srcfile = os.path.basename(self.tree.sourcefile)
 		src = "%s:%d" % (srcfile, node.lineno + self.tree.lineoffset)
+		return src
+
+	def genid(self, node, ext):
+		n = self.cur_module + "::" + type(node).__name__
+		if isinstance(node, str):
+			return ys.IdString("$" + node + "\\" + ext)
+		else:
+			srcfile = os.path.basename(self.tree.sourcefile)
+			src = "%s:%d" % (srcfile, node.lineno + self.tree.lineoffset)
 		return OBJ_ID(n, src, ext)
 
 	def setAttr(self, node):
@@ -1015,7 +1049,7 @@ Used for separation of common functionality of visitor classes"""
 		self.visit(node.value)
 		node.obj = self.getObj(node.value)
 		if hasattr(node.value, "syn"):
-			self.dbg(node, BLUEBG, "PASS ON ASSIGN ",  "sig: " + repr(node.value.id))
+			# self.dbg(node, BLUEBG, "PASS ON ASSIGN ",  "sig: " + repr(node.value.id))
 			node.syn = node.value.syn # pass on
 
 	def getAttr(self, node):
@@ -1084,12 +1118,20 @@ Used for separation of common functionality of visitor classes"""
 		node.syn = sm
 
 	def get_index(self, idx):
-		if isinstance(idx, ast.Name):
-			i = self.loopvars[idx.id]
+		if hasattr(idx, 'value'):
+			i = idx.value
+		elif isinstance(idx, ast.Name):
+			# If we're a global variable, assume we're a named slice:
+			try:
+				if idx.id in _slice_constDict:
+					i = _slice_constDict[idx.id]
+				else:
+					i = self.loopvars[idx.id]
+			except KeyError:
+				self.raiseError(idx, "Symbol not found: %s" % idx.id)
+
 		elif isinstance(idx, ast.Num):
 			i = idx.n
-		elif hasattr(idx, 'value'):
-			i = idx.value
 		else:
 			self.raiseError(idx, "Unhandled type %s" % type(idx))
 
@@ -1109,21 +1151,19 @@ Used for separation of common functionality of visitor classes"""
 			sm.is_signed = node.value.syn.is_signed
 		except AttributeError:
 			self.raiseError(node, "Unsynthesized argument %s" % type(obj))
-		sm.q = sig.extract(i, 1)
+		if isinstance(i, slice):
+			print(i.start, i.stop)
+			n = i.start - i.stop
+			if n < 0:
+				raise ValueError("Bad slice value")
+			sm.q = sig.extract(i.stop, n)
+		else:
+			sm.q = sig.extract(i, 1)
 
 		node.syn = sm
 
 	def findWire(self, node):
 		return self.context.findWire(node.obj)
-
-	def tie_defaults(self, node):
-		"Tie undefined 'other' inputs to defaults in synchronous processes"
-		prev = self.state
-		self.state = S_TIE_DEFAULTS
-		for stmt in node.body:
-			if isinstance(stmt, ast.If):
-				self.visit(stmt)
-		self.state = prev
 
 	def handle_memport(self, port, name, which):
 		m = self.context
@@ -1150,38 +1190,101 @@ Used for separation of common functionality of visitor classes"""
 		c.parameters[PID("WIDTH")] = data_w
 
 		return c, en
-		
+
+	def assign_default(self, name, dst, defdict):
+		m = self.context
+		if name in defdict:
+			previous = defdict[name][0]
+			ret = True
+		else:
+			w = m.findWireByName(name)
+			previous = w if w else self.variables[name].q
+			ret = False
+
+		m.connect(dst, previous)
+		return ret
+	
 	def handle_toplevel_reset_process(self, node, func, reset, clk, clkpol):
 		"Handle top level synchronous processes with reset"
 		m = self.context
+		default_assignments = {}
 		for stmt in node.body:
 			self.dbg(stmt, GREEN, "SEQ_STMT", stmt)
+
 			self.visit(stmt)
 			if isinstance(stmt, ast.If):
+				sm = stmt.syn
+				for n, drv in sm.drivers.items():
+					y, other, default = drv
+					if default:
+						self.assign_default(n, default, default_assignments)
+					if other:
+						self.assign_default(n, other, default_assignments)
+
+					if n in default_assignments:
+						default_assignments[n][2] = False # Clear flag
+
 				func(m, stmt, reset, clk, clkpol)
+				# Now if we have an open 'other' input, tie it to default:
 			elif isinstance(stmt, ast.Assign):
+				# This gets nasty. An assigment can be a default signal for subsequent
+				# assignments, or a one time thing.
 				lhs = stmt.targets[0]
-				n = lhs.obj._name
-				# Ugly: ad-hoc insert drivers:
-				stmt.syn.drivers = { n : [stmt.syn.q, None] }
-				func(m, stmt, reset, clk, clkpol)
+				n = stmt.id
+				if not n in default_assignments:
+					# We need to store a COPY of the current output value
+					# in the first field, because it may change during scanning
+					self.dbg(stmt, REDBG, "STORE DEFAULT", n)
+					default_assignments[n] = [stmt.syn.q, stmt, True]
+				else:
+					self.dbg(stmt, REDBG, "WARNING", "Overriding statement")
+					raise AssertionError
 			else:
 				self.dbg(stmt, REDBG, "HANDLE OTHER", stmt)
 
-	def handle_toplevel_process(self, node, func, clk, clkpol):
+		# Now assign all non-muxed (left over) signals (those with flag still set):
+		for n, i in default_assignments.items():		
+			if i[2]:
+				self.dbg(i, BLUEBG, "FINAL ASSIGN", n)
+				i[1].syn.drivers = { n : [i[0], None, None] }
+				func(m, i[1], reset, clk, clkpol)
+
+		
+	def handle_toplevel_process(self, node, func, clk, clkpol = False):
 		"Handle top level processes"
 		m = self.context
+		default_assignments = {}
 		for stmt in node.body:
-			self.dbg(stmt, GREEN, "STMT", stmt)
 			self.visit(stmt)
+			if clk:
+				self.dbg(stmt, GREEN, "STMT_SYNC", clk._name)
+			else:
+				self.dbg(stmt, GREEN, "STMT_COMB", "async")
 			if isinstance(stmt, ast.If):
+				
+				sm = stmt.syn
+				for n, drv in sm.drivers.items():
+					y, other, default = drv
+					if default:
+						self.assign_default(n, default, default_assignments)
+					if other:
+						self.assign_default(n, other, default_assignments)
+
+					if n in default_assignments:
+						default_assignments[n][2] = False
+
 				func(m, stmt, clk, clkpol)
 			elif isinstance(stmt, ast.Assign):
+				# This gets nasty. An assigment can be a default signal for subsequent
+				# assignments, or a one time thing.
 				lhs = stmt.targets[0]
-				n = lhs.obj._name
-				# Ugly: ad-hoc insert drivers:
-				stmt.syn.drivers = { n : [stmt.syn.q, None] }
-				func(m, stmt, clk, clkpol)
+				n = stmt.id
+				if not n in default_assignments:
+					# We need to store a COPY of the current output value
+					# in the first field, because it may change during scanning
+					default_assignments[n] = [stmt.syn.q, stmt, True]
+				else:
+					self.dbg(stmt, REDBG, "WARNING", "Overriding statement")
 			# Special treatment for memory port without condition:
 			# Wire EN pins to True
 			elif stmt.syn.el_type == SM_MEMPORT:
@@ -1192,232 +1295,206 @@ Used for separation of common functionality of visitor classes"""
 					cc.append(c)
 				m.connect(en_sig, cc)
 			else:
-				self.dbg(stmt, REDBG, "HANDLE OTHER", stmt)
+				self.dbg(stmt, BLUEBG, "HANDLE OTHER", stmt)
+		
+		# Left overs (non-muxed):
+		for n, i in default_assignments.items():		
+			if i[2]:
+				self.dbg(i, BLUEBG, "FINAL ASSIGN", n)
+				i[1].syn.drivers = { n : [i[0], None, None] }
+				func(m, i[1], clk, clkpol)
 
-	def handle_mux_statement(self, cond, stmt, casemap):
-		"Handle multiplexer case"
-		MARK = "\033[7;32m"
-
-		m = self.context
-
-		# List of sources that needs to be tracked to top hierarchy
-		sources = []
-
-		for t in stmt:
-			if isinstance(t, ast.Assign):
-				if hasattr(t.syn, "sources") and 'enable' in t.syn.sources:
-					self.dbg(t, REDBG, "SOURCE", "Open source from %s" % t.syn.memid)
-					next_en = m.addSignal(None, 1)
-					q = m.addSignal(None, 1)
-					name = NEW_ID(__name__, t, "and_enable")
-					and_cell = m.addAnd(name, next_en, cond, q)
-					cc = m.addSignal(None, 0)
-					en_sig = t.syn.sources['enable']
-					for i in range(en_sig.size()):
-						cc.append(q)
-					m.connect(en_sig, cc)
-					sources.append(t.syn.sources)
-				else:
-					sigid = t.targets[0].obj._name
-					target = m.findWireByName(sigid)
-					l = target.size()
-					if sigid in casemap:
-						self.dbg(t, REDBG, "DRV_OBSOLETE",	"ineffective previous assignment to '%s'" % sigid)
-					b = t.value
-					mux_b = mux_input(b, target)
-					casemap[sigid] = [ mux_b ]
-					
-			elif isinstance(t, ast.If):
-				if t.ignore:
-					self.dbg(t, REDBG, "SKIP_IF",	"ineffective if statement")
-				else:
-					self.dbg(t, VIOBG, "VISIT_MUX_NODE",  "")
-					for sigid, drv in t.syn.drivers.items():
-						if sigid in casemap:
-							self.dbg(t, MARK, "DRV",  "%s has default. Driver entry: %s" % (sigid, drv))
-							# print("previous:", casemap[sigid])
-							self.context.connect(drv[1], casemap[sigid][0])
-							casemap[sigid].insert(0, drv[0])
-						else:
-							casemap[sigid] = [drv[0]]
-
+	def handle_mux_table(self, stmt, defaults, drv, n, pos):
+		if isinstance(stmt, ast.Assign):
+			name = stmt.id
+			if not name in drv:
+				drv[name] = [ ("default_%d" % i, None) for i in range(n) ]
+			mux_id = self.node_tag(stmt)
+			# Assign nodes have a simple synthesis output
+			drv[name][pos] = (mux_id, stmt.syn.q)
+			if name in defaults:
+				self.dbg(stmt, REDBG, "DEFAULT OVERRIDE", name)
+				raise AssertionError
 			else:
-				self.dbg(t, MARK, "UNSUPPORTED",  "generating mux")
-				raise AssertionError("Unhandled statement")
+				self.dbg(stmt, REDBG, "DEFAULT ASSIGN", name)
+				defaults[name] = [stmt.syn.q, stmt]
+			self.dbg(stmt, REDBG, "ASSIGN", name)
+		elif isinstance(stmt, ast.If):
+			for t in stmt.drivers.items():
+				name, i = t
+				mux_id = self.node_tag(stmt)
+				y, other, default = stmt.syn.drivers[name] # Get output, other and default sources
 
-		return sources
+				if other:
+					self.assign_default(name, other, defaults)
+				if default:
+					self.assign_default(name, default, defaults)
 
-	def mapToPmux(self, node, sync = False):
-		# print("MAP_PMUX %d" % len(node.tests))
+				if name in drv:
+					drv[name][pos] = (mux_id, y)
+				else:
+					self.dbg(stmt, REDBG, "DEBUG", i[1])
+					drv[name] = [ ("%s_%s_default" % (mux_id, name), None) for _ in range(n)]
+					drv[name][pos] = (mux_id, y)
+
+		elif isinstance(stmt, ast.Pass):
+			self.dbg(stmt, REDBG, "WARNING",  "uncovered else clause")
+		else:
+			self.dbg(stmt, REDBG, "UNSUPPORTED", \
+				"generating mux for %s" % type(stmt))
+			raise AssertionError("Unhandled statement")
+
+
+		# We create a record for this driver pool:
+		sm = SynthesisMapper(SM_RECORD)
+		for name, item in drv.items():
+			# self.dbg(stmt, BLUEBG, "PROCESS driver", "%s" % name)
+			if hasattr(item, "sources") and 'enable' in item.sources:
+				self.dbg(stmt, REDBG, "SOURCE", "Open source from %s" % item.memid)
+			else:
+				if name in self.variables:
+					pass
+
+	def create_mux_table(self, node):
 		m = self.context
-		cc = m.addSignal(None, 0)
+		n = len(node.tests)
+		n += 1
 
-		muxmap = {}
 
-		l = len(node.tests)
+		# We store all potential signal drivers in this node
+		# context:
+		node.drivers = drivers = {}
 
-		for i, test in enumerate(node.tests):
-			t = test[0]
-			self.dbg(t, GREEN, "CASE[%d]" % i,	"")
-			cc.append(t.syn.q)
-			casemap = {}
-			self.handle_mux_statement(t.syn.q, test[1], casemap)
-
-			self.dbg(test, GREEN, "\n-- CASEMAP PMUX --", "parallel multiplexer map output:")
-
-			for n, item in casemap.items():
-				# print("   %s ===> %s" % (n, repr(i)))
-				target = m.findWireByName(n)
-
-				if not n in muxmap:
-					muxmap[n] = [ None for i in range(l) ]
-				muxmap[n][i] = item[0]
-
-				if len(item) == 2:
-					self.dbg(test, REDBG, "-- OVERRIDE DEFAULT --", "\n\n")
-
-			self.dbg(test, GREEN, "-- CASEMAP END --", "\n\n")
-	
-		elseclause = node.else_
-		if elseclause:
-			# print(GREEN + "OTHERS" + OFF)
-			elsemap = {}
-			self.handle_mux_statement(True, elseclause, elsemap)
-
-		other_map = {}
-		for e, i in elsemap.items():
-			other_map[e] = i[0]
-	
+		decision_signals = []
 		sm = SynthesisMapper(SM_RECORD)
 		sm.drivers = {}
+		c = 1
+		for test, suite in node.tests:
+			# print(test, suite)
+			sig_s = self.from_condition(test)
+			decision_signals.append(sig_s)
+			defaults = {}
+			for stmt in suite:
+				self.handle_mux_table(stmt, defaults, drivers, n, c)
+			c += 1
 
-		for wn, item in muxmap.items():
-			w = m.findWireByName(wn)
-			varray = m.addSignal(None, 0)
-			for j in item:
-				if j:
-					self.dbg(t, BLUEBG, "MUX_INPUT",  "create mux input " + wn + " type %s" % type(w))
-					# print("Width:", w.size())
-					varray.append(j)
-						
-					
-			y = m.addSignal(self.genid(node, wn + "_out"), w.size())
+		defaults = {}
+		# If we have an else clause, store at col 0 in table
+		for stmt in node.else_:
+			self.handle_mux_table(stmt, defaults, drivers, n, 0)
 
-			name = NEW_ID(__name__, node, "pmux")
-
-
-			self.dbg(t, BLUEBG, "MUX_INPUT",  "create mux input " + wn + " type %s" % type(w))
-
-			if wn in other_map:
-				a = other_map[wn]
-			else:
-				a = m.addSignal(self.genid(node, wn + "_other"), w.size())
-
-			m.addPmux(name, a, varray, cc, y)
-			sm.drivers[wn] = [ y, None ]
-	
-#		self.dbg(node, GREEN, "\n\n-- PMUXMAP --", "multiplexer map output:")
-#		for n, i in muxmap.items():
-#			print("   %s ===> %s" % (n, repr(i)))
-#
-#		self.dbg(node, GREEN, "-- PMUXMAP END --", "\n\n")
-			
 		node.syn = sm
 
-	def mapToMux(self, node, sync = False):
+		return defaults, decision_signals
+
+
+	def mapToPmux(self, node):
+		defaults, decision_signals = self.create_mux_table(node)
+
 		m = self.context
-		muxmap = {}
-		sm = SynthesisMapper(SM_RECORD)
+		for dr_id, drivers in node.drivers.items():
+			w = m.findWireByName(dr_id)
+			proto = w if w else self.variables[dr_id].q
+			size = proto.size()
 
-		for test, stmt in node.tests:
-			self.dbg(test, GREEN, "-- IF --",  "handle test %s" % test)
+			varray = m.addSignal(None, 0)
+			default = None
 
-			casemap = {}
+			cc = m.addSignal(None, 0)
+			for i, drvdesc in enumerate(drivers[1:]):
+				mux_id, drv = drvdesc
+				if not drv:
+					if not default:
+						name = self.genid(node, "%s_default" % dr_id)
+						default = m.addSignal(name, size)
+					drv = default
 
-			cond = test.syn.q
-			if isinstance(cond, ast.Name):
-				s = m.findWireByName(cond.id)
-			elif isinstance(cond, ys.SigSpec):
-				s = cond
-			elif isinstance(cond, Wire):
-				s = Signal(cond)
+				cc.append(decision_signals[i])
+				varray.append(drv)
+
+			other = drivers[0][1] # First is 'other'
+
+			if other:
+				o = other
+				other = None # Mark in driver map we're fully resolved
 			else:
-				# print(type(cond))
-				raise Synth_Nosupp("Unsupported MapMux selector type ")
+				# Create an open 'other' signal
+				name = self.genid(node, "default_%s" % dr_id)
+				other = o = m.addSignal(name, size)
+	
+			y = m.addSignal(self.genid(node, dr_id + "_out"), size)
 
-			self.handle_mux_statement(cond, stmt, casemap)
+			name = self.genid(node, "PMUX_%s" % dr_id)
 
-			self.dbg(test, GREEN, "\n-- CASEMAP --", "multiplexer map output:")
-			for n, i in casemap.items():
-				# print("	%s ===> %s" % (n, repr(i)))
-
-				target = m.findWireByName(n)
-				l = target.size()
+			m.addPmux(name, o, varray, cc, y)
+			node.syn.drivers[dr_id] = [ y, other, default ]
 
 
-				mux_b = i[0]
-				name = self.genid(test, n)
-				# self.dbg(test, BLUEBG, "ADD_SIGNAL",	"%s" % name)
-				other = m.addSignal(name, l)
+	def mapToMux(self, node):
+		defaults, decision_signals = self.create_mux_table(node)
 
-				if n in muxmap:
-					y = muxmap[n][1] # Grab previous 'other'
-				else:
-					y = m.addSignal(self.genid(test, n + "_out"), l)
-					self.dbg(test, BLUEBG, "INSERT NEW OUTPUT",  n)
-					muxmap[n] = [ y, other ]
+		m = self.context
+		for dr_id, drivers in node.drivers.items():
+			w = m.findWireByName(dr_id)
+			# Get prototype from origin value:
+			proto = w if w else self.variables[dr_id].q
+			size = proto.size()
+			
+			chain_out = m.addSignal(None, size)
+			y = chain_out # Start
+			# Now we chain the muxers:
 
-				name = self.genid(test, "mux_" + n)
-				m.addMux(name, other, mux_b, s, y)
-				muxmap[n][1] = other
+			# The default signal comes into play when we are missing
+			# an explicit assignment for a muxed signal within a specific condition.
+			# It is created on demand below.
+			default = None
 
-				if len(i) == 2:
-					self.dbg(test, REDBG, "-- OVERRIDE DEFAULT --", "\n\n")
-					# m.connect(other, i[1])
+			for i, drvdesc in enumerate(drivers[1:-1]):
+				mux_id, drv = drvdesc
+				if not drv:
+				# We have no assignment, use default:
+					if not default:
+						name = self.genid(node, "%s_default" % dr_id)
+						default = m.addSignal(name, size)
+					drv = default
 
-			self.dbg(test, GREEN, "-- CASEMAP END --", "\n\n")
+				name = self.genid(mux_id, "MUX_%s" % dr_id)
+				print("adding name", name)
+				other = m.addSignal(None, size)
+				s = decision_signals[i]
+				m.addMux(name, other, drv, s, y)
+				y = other # next output is previous other
 
-		elseclause = node.else_
-		if elseclause:
-			elsemap = {}
-			self.handle_mux_statement(True, elseclause, elsemap)
+			else_sig = drivers[0][1] # First is other
 
-			# self.dbg(node, REDBG, "\n\n-- ELSE CASE --", "multiplexer map output:")
+			if else_sig:
+				next_other = else_sig
+				else_sig = None # Mark in driver map we're fully resolved
+			else:
+				# Create an open 'next_other' signal
+				name = self.genid(node, "%s_other" % dr_id)
+				next_other = m.addSignal(name, size)
+				else_sig = next_other
 
-			for n, i in elsemap.items():
-				# print("	%s ===> %s" % (n, repr(i)))
-				target = m.findWireByName(n)
+			# Last one
+			mux_id, drv = drivers[-1]
+			if not drv:
+				if not default:
+					name = self.genid(node, "%s_defaultL" % dr_id)
+					default = m.addSignal(name, size)
+				drv = default
 
-				if len(i) == 2:
-					b, other = i
-				else:
-					b = i[0]
+			s = decision_signals[-1]
+			name = self.genid(mux_id, "MUX_%s" % dr_id)
+			m.addMux(name, next_other, drv, s, y)
 
-				# Check if we did not assign to this target in the 'case' section:
-				if n not in casemap:
-					self.dbg(node, REDBG, "MISSING CASE", " No default for %s" % n)
-					
-				if n in muxmap:
-					y, other = muxmap[n]
-					m.connect(other, b)
-					muxmap[n][1] = None # Mark as connected
-				else:
-					muxmap[n] = [ b, other ]
-					self.dbg(node, REDBG, "NO DEFAULT", " No default for %s" % n)
+			# Insert output and `else_sig` into multiplexer
+			# tracking map:
+			node.syn.drivers[dr_id] = [ chain_out, else_sig, default ]
 
-		self.dbg(node, GREEN, "\n\n-- MUXMAP --", "multiplexer map output:")
-#		for n, i in muxmap.items():
-#			print("   %s ===> %s" % (n, repr(i)))
-
-		self.dbg(node, GREEN, "-- MUXMAP END --", "\n\n")
-
-		sm.drivers = muxmap
-
-		node.syn = sm
 
 	def handle_toplevel_assignment(self, stmt):
 		"Auxiliary for signal wiring"
-
 
 		lhs = stmt.targets[0]
 		rhs = stmt.value
@@ -1446,10 +1523,11 @@ Used for separation of common functionality of visitor classes"""
 		else:
 			outsig = m.findWireByName(name)
 			signame = outsig.as_wire().name
-			self.dbg(stmt, REDBG, "SIGNAL local: '%s', %s" % (name, signame))
+			self.dbg(stmt, BLUEBG, "SIGNAL local: '%s', %s" % (name, signame))
 			# Simply connect RHS to LHS:
 			dst, src = (outsig, result)
 
+		# dst.replace(0, src)
 		m.connect(dst, src)
 
 

@@ -13,8 +13,6 @@ def up_counter(clk, ce, reset, counter):
 	def worker():
 		if ce:
 			counter.next = counter + 1
-		else:
-			counter.next = counter
 
 	return instances()
 
@@ -31,6 +29,44 @@ def simple_expr(clk, ce, reset, dout, debug):
 			dout.next = 1 | 4 | 2
 		else:
 			dout.next = 0
+
+	return instances()
+
+
+@block
+def bool_ops(clk, ce, reset, dout, debug):
+	"Simple static expressions"
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	b0, b1, b2 = [ Signal(bool()) for i in range(3) ]
+
+	@always_comb
+	def assign():
+		b0.next = counter < 4 or counter == 8 or counter > 22
+		b1.next = counter > 4 and counter < 8 and counter != 6
+		b2.next = ounter > 2 and counter < 12 or counter == 8
+
+	
+	@always_comb
+	def assign():
+		debug.next = b0 ^ b1 ^ b2
+
+	return instances()
+
+
+@block
+def if_expr(clk, ce, reset, dout, debug):
+	"IfExpr"
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_comb
+	def assign():
+		debug.next = 0
+		dout.next = 3 if counter == 5 else 9
 
 	return instances()
 
@@ -68,7 +104,6 @@ def proc_expr(clk, ce, reset, dout, debug):
 		dout.next = tmp
 
 	return instances()
-
 
 @block
 def assign_slice_legacy(clk, ce, reset, dout, debug):
@@ -299,19 +334,22 @@ def lfsr8_1(clk, ce, reset, dout, debug):
 
 @block
 def fail_elif(clk, ce, reset, dout, debug):
-	"Failing MUX case"
+	"Failing MUX case with missing default statement. Must throw error."
 	counter = Signal(modbv(0)[8:])
 	@always_seq(clk.posedge, reset)
 	def worker():
 		if ce:
 			counter.next = counter + 1
+
 	@always_comb
 	def assign():
 		if counter == 0:
-			dout.next = 1
+			dout.next = 20
+			debug.next = False
 		elif counter <= 15:
-			dout.next = 0
-			debug.next = 1
+			dout.next = 21
+			debug.next = True
+		# Missing else:
 
 	return instances()
 
@@ -339,12 +377,13 @@ def unused_pin(clk, ce, reset, dout, debug):
 # Tests
 
 
-UUT_LIST = [ simple_expr, simple_reset_expr, proc_expr, process_variables, module_variables,
+UUT_LIST = [ simple_expr, bool_ops, simple_reset_expr, proc_expr, process_variables, module_variables,
 	simple_arith, simple_cases, simple_resize_cases, lfsr8_1, counter_extended]
+
 
 UUT_LIST += [ unused_pin ]
 
-UUT_UNRESOLVED_LIST = [ fail_elif, assign_slice_legacy, assign_slice_new ]
+UUT_UNRESOLVED_LIST = [ if_expr, assign_slice_legacy, assign_slice_new, fail_elif ]
 
 @pytest.mark.parametrize("uut", UUT_LIST)
 def test_mapped_uut(uut):
