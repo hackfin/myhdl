@@ -33,7 +33,6 @@ def Rom(addr, data, INIT_DATA):
 		if interface.name in module.memories:
 			user = module.memories[interface.name]
 			user += 1 # Inc user
-			module.memories[interface.name] = user
 		else:
 			mem = module.addMemory(interface.name)
 			mem.width = dbits
@@ -50,7 +49,8 @@ def Rom(addr, data, INIT_DATA):
 			# Note: When INIT_DATA array is long, the
 			# RTL display will barf.
 			init.setPort("DATA", interface.toInitData(INIT_DATA, dbits))
-			module.memories[interface.name] = user
+
+		module.memories[interface.name] = user
 
 		clk = module.addSignal(None, 1)
 
@@ -69,3 +69,5 @@ def Rom(addr, data, INIT_DATA):
 
 
 	return simulation, implementation
+
+

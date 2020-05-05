@@ -13,7 +13,7 @@ from myhdl._block import block, _Block
 
 from myhdl.conversion import yshelper
 
-def setupCosimulation(name, use_assert, interface):
+def setupCosimulation(name, use_assert, interface, debug = False):
 	tb = "tb_" + name
 	objfile = "%s.o" % name
 	if path.exists(objfile):
@@ -27,6 +27,10 @@ def setupCosimulation(name, use_assert, interface):
 	subprocess.call(analyze_cmd)
 	simulate_cmd = ['vvp', '-m', '../../../../cosimulation/icarus/myhdl.vpi']
 	simulate_cmd += [ objfile ]
+	if debug:
+		print("Analyze command:", " ".join(analyze_cmd))
+		print("Simulation command:", " ".join(simulate_cmd))
+
 	c = Cosimulation(simulate_cmd, **interface)
 	c.name = name
 	return c
@@ -45,7 +49,7 @@ def tb_unit(uut, uut_syn, async_reset):
 	clk = Signal(bool())
 	debug, debug_syn = [ Signal(bool(0)) for i in range(2) ]
 	ce = Signal(bool())
-	dout, do_syn = [ Signal(intbv()[8:]) for i in range(2) ]
+	dout, do_syn = [ Signal(modbv()[8:]) for i in range(2) ]
 	reset = ResetSignal(0, 1, isasync = async_reset)
 
 	inst_clkgen = clkgen(clk, 20)

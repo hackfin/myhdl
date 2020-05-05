@@ -105,7 +105,6 @@ def ConstDriver(val, bit_len = None):
 
 	return sm
 		
-
 def NEW_ID(name, node, ext):
 	return ys.new_id(name, node.lineno, ext)
 
@@ -149,7 +148,7 @@ class Design:
 
 	def run(self, cmd):
 		"Careful. This function can exit without warning"
-		ys.run_pass(cmd, design)
+		ys.run_pass(cmd, self.design)
 
 	def display_rtl(self, selection = "", fmt = None, full = False):
 		"Display first stage RTL"
@@ -378,8 +377,8 @@ class Module:
 		ast.Div		 : ( ys.Module.addDiv,	 EX_SAME ),
 		ast.Mod		 : ( ys.Module.addMod,	 EX_TRUNC ),
 		ast.Pow		 : ( ys.Module.addPow,	 EX_SAME ),
-		ast.LShift	 : ( ys.Module.addShl,	 EX_SAME ),
-		ast.RShift	 : ( ys.Module.addShr,	 EX_SAME ),
+		ast.LShift	 : ( ys.Module.addSshl,	 EX_SAME ),
+		ast.RShift	 : ( ys.Module.addSshr,	 EX_SAME ),
 		ast.BitOr	 : ( ys.Module.addOr,	 EX_SAME ),
 		ast.BitAnd	 : ( ys.Module.addAnd,	 EX_SAME ),
 		ast.BitXor	 : ( ys.Module.addXor,	 EX_SAME ),
@@ -466,7 +465,7 @@ class Module:
 
 		# print("Add wire with name %s, size %d" % (name, l))
 		sm.q = self.addSignal(None, l)
-		name = NEW_ID(__name__, node, "binop")
+		name = NEW_ID(__name__, node, "binop_%s" % ("s" if is_signed else "u"))
 
 		f(self.module, name, a.q, b.q, sm.q, is_signed)
 
@@ -500,7 +499,6 @@ class Module:
 
 		self.guard_name(name, public)
 
-		# print("adding wire '%s'" % (name))
 		return Wire(self.module.addWire(name, n))
 
 	def addSignal(self, name, n, public = False):
@@ -517,7 +515,17 @@ class Module:
 			ct = PID(celltype)
 		else:
 			ct = ID(celltype)
-		return Cell(self.module.addCell(ID(name), ct))
+		if isinstance(name, str):
+			identifier = ID(name)
+		else:
+			identifier = name
+		return Cell(self.module.addCell(identifier, ct))
+
+	def addSimpleCell(self, name, which, in_a, in_b, out_y):
+		c = self.addCell(name, which)
+		c.setPort("A", in_a)
+		c.setPort("B", in_b)
+		c.setPort("Y", out_y)
 
 	def findWire(self, sig, local = False):
 		# TODO: Simplify, once elegant handling found
@@ -620,6 +628,8 @@ class Module:
 			# print("\tENUM %s" % arg)
 			pass
 		elif arg == None:
+			pass
+		elif isinstance(arg, tuple):
 			pass
 		else:
 			# print("Bus/Port class %s" % name)
@@ -994,6 +1004,11 @@ class VisitorHelper(DebugOutput):
 	"""Visitor helper class for yosys interfacing
 Used for separation of common functionality of visitor classes"""
 
+	if DebugOutput.debug:
+		srcformat = "%s:%d"
+	else:
+		srcformat = "%s:%d$"
+
 	# Note: Python3 specific
 	_opmap_reduce_const = {
 		ast.Add		 : int.__add__,
@@ -1030,7 +1045,7 @@ Used for separation of common functionality of visitor classes"""
 
 	def node_tag(self, node):
 		srcfile = os.path.basename(self.tree.sourcefile)
-		src = "%s:%d" % (srcfile, node.lineno + self.tree.lineoffset)
+		src = self.srcformat % (srcfile, node.lineno + self.tree.lineoffset)
 		return src
 
 	def genid(self, node, ext):
@@ -1039,7 +1054,7 @@ Used for separation of common functionality of visitor classes"""
 			return ys.IdString("$" + node + "\\" + ext)
 		else:
 			srcfile = os.path.basename(self.tree.sourcefile)
-			src = "%s:%d" % (srcfile, node.lineno + self.tree.lineoffset)
+			src = self.srcformat % (srcfile, node.lineno + self.tree.lineoffset)
 		return OBJ_ID(n, src, ext)
 
 	def setAttr(self, node):
@@ -1101,14 +1116,14 @@ Used for separation of common functionality of visitor classes"""
 			if lower == None:
 				n = sig.size()
 			else:
-				n = lower.n
+				n = self.const_eval(lower)
 
 		elif lower == None:
-			i = upper.n
-			n = sig.size() - upper.n
+			i = self.const_eval(upper)
+			n = sig.size() - i
 		else:
-			i = upper.n
-			n = lower.n - upper.n
+			i = self.const_eval(upper)
+			n = lower.n - i
 
 		if sig.size() < (i + n):
 			self.raiseError(node, "Invalid signal size: %d < %d" % (sig.size(), i + n))
@@ -1133,7 +1148,7 @@ Used for separation of common functionality of visitor classes"""
 		elif isinstance(idx, ast.Num):
 			i = idx.n
 		else:
-			self.raiseError(idx, "Unhandled type %s" % type(idx))
+			i = self.const_eval(idx)
 
 		return i
 
@@ -1144,21 +1159,37 @@ Used for separation of common functionality of visitor classes"""
 		idx = node.slice.value
 		obj = node.value.obj
 
-		i = self.get_index(idx)
-		try:
-			sig = node.value.syn.q
-			# Inherit signedness:
-			sm.is_signed = node.value.syn.is_signed
-		except AttributeError:
-			self.raiseError(node, "Unsynthesized argument %s" % type(obj))
-		if isinstance(i, slice):
-			print(i.start, i.stop)
-			n = i.start - i.stop
-			if n < 0:
-				raise ValueError("Bad slice value")
-			sm.q = sig.extract(i.stop, n)
+		if isinstance(idx, ast.Call):
+			self.visit(idx)
+			if idx.syn.el_type in [ SM_WIRE, SM_VAR ]:
+				m = self.context
+				name = self.genid(node, "slice_out")
+				y = m.addSignal(name, 1)
+				name = self.genid(node, "slice")
+				m.addSimpleCell(name, "dynslice", node.value.syn.q, idx.syn.q, y)
+				sm.q = y
+				# self.raiseError(idx, "Slice inference not yet supported")
+			else:
+				self.raiseError(idx, "Unsupported index type: %s" % (idx.syn.el_type))
+		elif isinstance(idx, _Signal):
+			self.raiseError(idx, "Do not ")
 		else:
-			sm.q = sig.extract(i, 1)
+			i = self.get_index(idx)
+
+			try:
+				sig = node.value.syn.q
+				# Inherit signedness:
+				sm.is_signed = node.value.syn.is_signed
+			except AttributeError:
+				self.raiseError(node, "Unsynthesized argument %s" % type(obj))
+			if isinstance(i, slice):
+				print(i.start, i.stop)
+				n = i.start - i.stop
+				if n < 0:
+					raise ValueError("Bad slice value")
+				sm.q = sig.extract(i.stop, n)
+			else:
+				sm.q = sig.extract(i, 1)
 
 		node.syn = sm
 
@@ -1210,9 +1241,10 @@ Used for separation of common functionality of visitor classes"""
 		default_assignments = {}
 		for stmt in node.body:
 			self.dbg(stmt, GREEN, "SEQ_STMT", stmt)
-
 			self.visit(stmt)
 			if isinstance(stmt, ast.If):
+				if stmt.ignore:
+					continue
 				sm = stmt.syn
 				for n, drv in sm.drivers.items():
 					y, other, default = drv
@@ -1234,7 +1266,6 @@ Used for separation of common functionality of visitor classes"""
 				if not n in default_assignments:
 					# We need to store a COPY of the current output value
 					# in the first field, because it may change during scanning
-					self.dbg(stmt, REDBG, "STORE DEFAULT", n)
 					default_assignments[n] = [stmt.syn.q, stmt, True]
 				else:
 					self.dbg(stmt, REDBG, "WARNING", "Overriding statement")
@@ -1261,24 +1292,46 @@ Used for separation of common functionality of visitor classes"""
 			else:
 				self.dbg(stmt, GREEN, "STMT_COMB", "async")
 			if isinstance(stmt, ast.If):
-				
-				sm = stmt.syn
-				for n, drv in sm.drivers.items():
-					y, other, default = drv
-					if default:
-						self.assign_default(n, default, default_assignments)
-					if other:
-						self.assign_default(n, other, default_assignments)
+				if not stmt.ignore:
+					sm = stmt.syn
+					for n, drv in sm.drivers.items():
+						y, other, default = drv
+						if default:
+							if not clk:
+								self.dbg(stmt, REDBG, "LATCH_WARNING", \
+									"Incomplete assignments, latch created for %s" % n)
+							self.assign_default(n, default, default_assignments)
+						if other:
+							if not clk:
+								self.dbg(stmt, REDBG, "LATCH_WARNING", \
+									"Incomplete assignments, latch created for %s" % n)
 
-					if n in default_assignments:
-						default_assignments[n][2] = False
+							self.assign_default(n, other, default_assignments)
 
-				func(m, stmt, clk, clkpol)
+						if n in default_assignments:
+							default_assignments[n][2] = False
+
+					func(m, stmt, clk, clkpol)
 			elif isinstance(stmt, ast.Assign):
 				# This gets nasty. An assigment can be a default signal for subsequent
 				# assignments, or a one time thing.
 				lhs = stmt.targets[0]
 				n = stmt.id
+				if isinstance(lhs, ast.Name):
+					pass
+				elif isinstance(lhs.obj, _Signal):
+					pass
+				elif isinstance(lhs, ast.Subscript):
+					rhs = stmt.value
+					# Legacy allows lhs.value to be an attribute.
+					if __legacy__:
+						if isinstance(lhs.value, ast.Attribute):
+							self.dbg(stmt, REDBG, "LEGACY_ASSIGN", rhs.syn.q)
+							m.connect(lhs.syn.q, rhs.syn.q)
+					else:
+						name = lhs.value.id
+						self.variables[name] = rhs.obj
+
 				if not n in default_assignments:
 					# We need to store a COPY of the current output value
 					# in the first field, because it may change during scanning
@@ -1287,15 +1340,18 @@ Used for separation of common functionality of visitor classes"""
 					self.dbg(stmt, REDBG, "WARNING", "Overriding statement")
 			# Special treatment for memory port without condition:
 			# Wire EN pins to True
-			elif stmt.syn.el_type == SM_MEMPORT:
-				cc = m.addSignal(None, 0)
-				c = ConstSignal(True)
-				en_sig = stmt.syn.sources['enable']
-				for i in range(en_sig.size()):
-					cc.append(c)
-				m.connect(en_sig, cc)
+			elif isinstance(stmt, ast.For):
+				pass
 			else:
-				self.dbg(stmt, BLUEBG, "HANDLE OTHER", stmt)
+				if stmt.syn.el_type == SM_MEMPORT:
+					cc = m.addSignal(None, 0)
+					c = ConstSignal(True)
+					en_sig = stmt.syn.sources['enable']
+					for i in range(en_sig.size()):
+						cc.append(c)
+					m.connect(en_sig, cc)
+				else:
+					self.dbg(stmt, REDBG, "UNHANDLED", "")
 		
 		# Left overs (non-muxed):
 		for n, i in default_assignments.items():		
@@ -1316,10 +1372,11 @@ Used for separation of common functionality of visitor classes"""
 				self.dbg(stmt, REDBG, "DEFAULT OVERRIDE", name)
 				raise AssertionError
 			else:
-				self.dbg(stmt, REDBG, "DEFAULT ASSIGN", name)
 				defaults[name] = [stmt.syn.q, stmt]
-			self.dbg(stmt, REDBG, "ASSIGN", name)
 		elif isinstance(stmt, ast.If):
+			if stmt.ignore:
+				return
+
 			for t in stmt.drivers.items():
 				name, i = t
 				mux_id = self.node_tag(stmt)
@@ -1333,7 +1390,6 @@ Used for separation of common functionality of visitor classes"""
 				if name in drv:
 					drv[name][pos] = (mux_id, y)
 				else:
-					self.dbg(stmt, REDBG, "DEBUG", i[1])
 					drv[name] = [ ("%s_%s_default" % (mux_id, name), None) for _ in range(n)]
 					drv[name][pos] = (mux_id, y)
 
@@ -1459,7 +1515,6 @@ Used for separation of common functionality of visitor classes"""
 					drv = default
 
 				name = self.genid(mux_id, "MUX_%s" % dr_id)
-				print("adding name", name)
 				other = m.addSignal(None, size)
 				s = decision_signals[i]
 				m.addMux(name, other, drv, s, y)

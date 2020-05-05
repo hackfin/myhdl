@@ -1,6 +1,6 @@
 import ast
 from myhdl._block import _Block
-
+import sys
 # from myhdl._getHierarchy import _getHierarchy
 
 from types import GeneratorType
@@ -311,11 +311,8 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				node.syn = val.syn
 		elif f is int:
 			val = node.args[0]
-			if isinstance(val.obj._val, EnumItemType):
-				self.visit(val)
-				node.syn = val.syn
-			else:
-				self.dbg(node, REDBG, "TYPE", type(val.obj._val))
+			self.visit(val)
+			node.syn = val.syn
 		elif f is concat:
 			self.dbg(node, GREEN, "CONCAT", "")
 			q = self.context.addSignal(None, 0)
@@ -330,12 +327,15 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		elif f is myhdl.StopSimulation:
 			self.dbg(node, REDBG, "RAISE FUNCTION", f)
 		else:
-			args = tuple([ i.value for i in node.args ])
-			result = f(*args)
-			if isinstance(result, intbv):
-				self.dbg(node, REDBG, "FUNCTION intbv", "size: %d" % len(result))
-			else:
-				self.raiseError(node, "Unsupported return type from %s" % f.__name__)
+			try:
+				args = tuple([ i.value for i in node.args ])
+				result = f(*args)
+				if isinstance(result, intbv):
+					self.dbg(node, REDBG, "FUNCTION intbv", "size: %d" % len(result))
+				else:
+					self.raiseError(node, "Unsupported return type from %s" % f.__name__)
+			except AttributeError:
+				self.raiseError(node, "Unsupported function type %s" % f.__name__)
 
 			sm = SynthesisMapper(SM_WIRE)
 			sm.q = ConstSignal(result, len(result))
@@ -608,6 +608,8 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 	def visit_Subscript(self, node):
 		obj = node.value.obj
 
+		self.generic_visit(node.slice)
+
 		if isinstance(node.slice, ast.Slice):
 			# Special case of intbv slicing upon assignment:
 			# TODO: Move into accessSlice()
@@ -618,13 +620,15 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 					else:
 						downto = 0
 
-					self.generic_visit(node.slice.lower)
 					n = node.slice.lower.obj - downto
 					node.syn = ConstDriver(obj, n)
 				else:
 					self.accessSlice(node)
 			else:
-				self.accessSlice(node)
+				try:
+					self.accessSlice(node)
+				except AttributeError:
+					self.raiseError(node, "Bad index type, %s" % sys.exc_info()[1])
 		elif isinstance(obj, _Rom):
 			self.visit(node.slice)
 			node.syn = node.slice.value.syn
@@ -708,7 +712,16 @@ class _ConvertAlwaysDecoVisitor(_ConvertVisitor):
 				else:
 					self.dbg(node, BLUEBG, "FLIPFLOP_VARIABLE", "%s" % name)
 					self.variables[name].q = sig[0]
-		
+
+		def handle_comb(m, stmt, clk, clkpol = True):
+			for name, sig in stmt.syn.drivers.items():
+				gsig = m.findWireByName(name)
+				if gsig:
+					gsig = m.findWireByName(name)
+					m.connect(gsig, sig[0])
+				else:
+					self.variables[name].q = sig[0]
+	
 		assert self.tree.senslist
 		m = self.context
 		self.cur_module = node.name
@@ -732,11 +745,10 @@ class _ConvertAlwaysDecoVisitor(_ConvertVisitor):
 			self.clk = clk
 			self.clkpol = clkpol
 			# print(clk)
+			self.handle_toplevel_process(node, handle_dff, clk, clkpol)
 		else:
-			self.dbg(node, REDBG, "PROCESS_UNHANDLED", "%s() :" % self.tree.name)
-			raise Synth_Nosupp("Can't handle this YET")
+			self.handle_toplevel_process(node, handle_comb, None)
 
-		self.handle_toplevel_process(node, handle_dff, clk, clkpol)
 
 
 class _ConvertAlwaysSeqVisitor(_ConvertVisitor):
@@ -827,40 +839,6 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 
 		m = self.context
 
-#		for stmt in node.body:
-#			self.dbg(stmt, GREEN, "STMT_COMB", stmt)
-#			self.visit(stmt)
-#			if isinstance(stmt, ast.If):
-#				for name, sig in stmt.syn.drivers.items():
-#					print("wire %s:" % name)
-#					gsig = m.findWireByName(name)
-#					m.connect(gsig, sig[0])
-#					self.dbg(stmt, BLUEBG, "DRIVERS", name)
-#			elif isinstance(stmt, ast.Assign):
-#				lhs = stmt.targets[0]
-#				# Variable assignments are handled inline
-#				if isinstance(lhs, ast.Name):
-#					pass
-#				elif isinstance(lhs.obj, _Signal):
-#					self.handle_toplevel_assignment(stmt)				
-#				# Allow legacy assignment inside always_comb:
-#				elif isinstance(lhs, ast.Subscript):
-#					rhs = stmt.value
-#					# Legacy allows lhs.value to be an attribute.
-#					if __legacy__:
-#						if isinstance(lhs.value, ast.Attribute):
-#							self.dbg(stmt, REDBG, "LEGACY_ASSIGN", rhs.syn.q)
-#							m.connect(lhs.syn.q, rhs.syn.q)
-#					else:
-#						name = lhs.value.id
-#						self.variables[name] = rhs.obj
-#				elif isinstance(lhs, ast.Attribute):
-#					self.dbg(stmt, REDBG, "UNSUPPORTED ATTR ASSIGN", type(lhs.obj))
-#					raise Synth_Nosupp("Can't handle attr assignment YET")
-#				else:
-#					self.dbg(stmt, REDBG, "UNHANDLED ASSIGN", type(lhs))
-#					raise AssertionError
-
 		def handle_comb(m, stmt, clk, clkpol = True):
 			for name, sig in stmt.syn.drivers.items():
 				gsig = m.findWireByName(name)
@@ -938,7 +916,7 @@ def convert_wires(m, c, a, n):
 		# z = input("##- HIT RETURN")
 	elif isinstance(a, intbv):
 		l = len(a)
-		print("CONST (vector len %d) wire" % l)
+		# print("CONST (vector len %d) wire" % l)
 		port = m.addWire(None, l)
 		s = Signal(port)
 		sig = ConstSignal(a, l)
@@ -948,8 +926,6 @@ def convert_wires(m, c, a, n):
 		m.connect(s, sig)
 	elif isinstance(a, int) or isinstance(a, bool):
 		print("CONST wire")
-		# sig = ConstSignal(a)
-		# c.setPort(n, sig)
 		print("WARNING: Parameter '%s' handled as constant signal" % n)
 		# FIXME:
 		# Parameters should only be passed on this way to
@@ -1056,7 +1032,6 @@ def convert_rtl(h, instance, design, module_signals):
 
 	# Create submodule instances as cells:
 	print(76 * '=')
-	print("VISIT INSTANCES") 
 	for name, inst in instance.instances:
 		key = create_key(inst)
 		impl = inst

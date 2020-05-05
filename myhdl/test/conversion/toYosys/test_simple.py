@@ -372,6 +372,85 @@ def unused_pin(clk, ce, reset, dout, debug):
 
 	return instances()
 
+@block
+def simple_sr(clk, ce, reset, dout, debug):
+	"Simple parametric shift register"
+	counter = Signal(modbv(0)[8:])
+	cr = ResetSignal(0, 1, isasync = False)
+
+	ctr = up_counter(clk, ce, cr, counter)
+	PIPE_RESET_BRANCH = 0b0001
+	PIPELEN = 4
+	pipe_valid = Signal(modbv(0)[PIPELEN:])
+
+	@always_seq(clk.posedge, reset)
+	def worker():
+		ibranch = counter[5]
+		preset = counter[7]
+
+		if preset == 1:
+			pipe_valid.next = 0b0010
+		elif ibranch == 1:
+			pipe_valid.next = PIPE_RESET_BRANCH
+		else:
+			pipe_valid.next = concat(pipe_valid[PIPELEN-1:], ce)
+
+
+	@always_comb
+	def assign():
+		dout.next = pipe_valid
+		cr.next = reset
+
+	return instances()
+
+@block
+def simple_shift_right(clk, ce, reset, dout, debug):
+	"Arithmetic shift right"
+	counter = Signal(modbv(0)[8:])
+	cr = ResetSignal(0, 1, isasync = False)
+	ctr = up_counter(clk, ce, cr, counter)
+
+	@always(clk.posedge)
+	def worker():
+		index = counter[2:]
+
+		if ce:
+			dout.next = counter[8:2] >> index
+		else:
+			dout.next = counter[8:2].signed() >> index
+
+		debug.next = True
+
+	@always_comb
+	def assign():
+		cr.next = reset
+
+	return instances()
+
+
+@block
+def dynamic_slice(clk, ce, reset, dout, debug):
+	"Dynamic slicer example. Infers an external $dynslice blackbox"
+	counter = Signal(modbv(0)[8:])
+	cr = ResetSignal(0, 1, isasync = False)
+
+	ctr = up_counter(clk, ce, cr, counter)
+	PIPE_RESET_BRANCH = 0b0001
+	PIPELEN = 4
+
+	@always(clk.posedge)
+	def worker():
+		index = counter[4:]
+		select = counter[8:4]
+
+		debug.next = select[int(index)]
+
+	@always_comb
+	def assign():
+		dout.next = 0
+		cr.next = reset
+
+	return instances()
 
 ############################################################################
 # Tests
@@ -380,10 +459,11 @@ def unused_pin(clk, ce, reset, dout, debug):
 UUT_LIST = [ simple_expr, bool_ops, simple_reset_expr, proc_expr, process_variables, module_variables,
 	simple_arith, simple_cases, simple_resize_cases, lfsr8_1, counter_extended]
 
+UUT_LIST += [ simple_sr, simple_shift_right ]
 
 UUT_LIST += [ unused_pin ]
 
-UUT_UNRESOLVED_LIST = [ if_expr, assign_slice_legacy, assign_slice_new, fail_elif ]
+UUT_UNRESOLVED_LIST = [ dynamic_slice, if_expr, assign_slice_legacy, assign_slice_new, fail_elif ]
 
 @pytest.mark.parametrize("uut", UUT_LIST)
 def test_mapped_uut(uut):
