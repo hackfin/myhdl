@@ -20,7 +20,6 @@ def wrapper(uut, clk, ce, reset, mode, data_in, data_out, **kwargs):
 	return instances()
 
 
-
 @block
 def tb_unit(uut, syn, async_reset, DATA_IN, DATA_IMM, MODE, DATA_OUT):
 	mode = Signal(t.t_lmode.LW)
@@ -174,7 +173,7 @@ CHECK_LIST1 = (
 
 @pytest.mark.parametrize("succeed, uut, din, imm, m, dout", CHECK_LIST0)
 def test_resize_vectors_ok(succeed, uut, din, imm, m, dout):
-	run_conversion(uut, False, wrapper, IMM = imm, MODE = m, DATA_IN = din, DATA_OUT = dout)
+	run_conversion(uut, False, wrapper, IMM = imm, MODE = m, DATA_IN = din, DATA_OUT = dout, display=True, display_module="")
 	check_resize_vectors(succeed, uut, din, imm, m, dout)
 
 @pytest.mark.parametrize("succeed, uut, din, imm, m, dout", CHECK_LIST1)

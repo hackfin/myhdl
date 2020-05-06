@@ -27,7 +27,7 @@ from types import GeneratorType
 
 from myhdl import StopSimulation, _SuspendSimulation
 from myhdl import _simulator, SimulationError
-from myhdl._Cosimulation import Cosimulation
+from myhdl._Cosimulation import CosimulationPipe
 from myhdl._simulator import _signals, _siglist, _futureEvents
 from myhdl._Waiter import _Waiter
 from myhdl._Waiter import _inferWaiter
@@ -103,6 +103,8 @@ class Simulation(object):
                 os.close(cosim._rt)
                 os.close(cosim._wf)
                 cosim._child.wait()
+            self._cosims = [] # In case we finalize twice,
+            # like from a StopSimulation event
         if _simulator._tracing:
             _simulator._tracing = 0
             _simulator._tf.close()
@@ -250,7 +252,7 @@ def _makeWaiters(arglist):
             waiters.append(_inferWaiter(arg))
         elif isinstance(arg, _Instantiator):
             waiters.append(arg.waiter)
-        elif isinstance(arg, Cosimulation):
+        elif isinstance(arg, CosimulationPipe):
             cosims.append(arg)
             waiters.append(_SignalTupleWaiter(arg._waiter()))
         elif isinstance(arg, _Waiter):

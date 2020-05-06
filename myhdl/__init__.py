@@ -155,7 +155,7 @@ from ._ShadowSignal import ConcatSignal
 from ._ShadowSignal import TristateSignal
 from ._simulator import now
 from ._delay import delay
-from ._Cosimulation import Cosimulation
+from ._Cosimulation import Cosimulation, CosimulationPipe
 from ._Simulation import Simulation
 from ._misc import instances, downrange
 from ._always_comb import always_comb
@@ -190,6 +190,7 @@ __all__ = ["bin",
            "downrange",
            "StopSimulation",
            "Cosimulation",
+           "CosimulationPipe",
            "Simulation",
            "instances",
            "instance",

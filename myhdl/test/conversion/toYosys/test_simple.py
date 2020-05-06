@@ -13,8 +13,6 @@ def up_counter(clk, ce, reset, counter):
 	def worker():
 		if ce:
 			counter.next = counter + 1
-		else:
-			counter.next = counter
 
 	return instances()
 
@@ -31,6 +29,62 @@ def simple_expr(clk, ce, reset, dout, debug):
 			dout.next = 1 | 4 | 2
 		else:
 			dout.next = 0
+
+	return instances()
+
+
+@block
+def bool_ops(clk, ce, reset, dout, debug):
+	"Simple static expressions"
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	b0, b1, b2 = [ Signal(bool()) for i in range(3) ]
+
+	@always_comb
+	def assign():
+		b0.next = counter < 4 or counter == 8 or counter > 22
+		b1.next = counter > 4 and counter < 8 and counter != 6
+		b2.next = ounter > 2 and counter < 12 or counter == 8
+
+	
+	@always_comb
+	def assign():
+		debug.next = b0 ^ b1 ^ b2
+
+	return instances()
+
+
+@block
+def if_expr(clk, ce, reset, dout, debug):
+	"IfExpr"
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_comb
+	def assign():
+		debug.next = 0
+		dout.next = 3 if counter == 5 else 9
+
+	return instances()
+
+@block
+def simple_reset_expr(clk, ce, reset, dout, debug):
+	"Simple static expressions"
+	q = Signal(modbv(0)[8:])
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_seq(clk.posedge, reset)
+	def worker():
+		q.next = counter
+
+	@always_comb
+	def assign():
+		dout.next = q
 
 	return instances()
 
@@ -68,7 +122,6 @@ def proc_expr(clk, ce, reset, dout, debug):
 		dout.next = tmp
 
 	return instances()
-
 
 @block
 def assign_slice_legacy(clk, ce, reset, dout, debug):
@@ -297,19 +350,22 @@ def lfsr8_1(clk, ce, reset, dout, debug):
 
 @block
 def fail_elif(clk, ce, reset, dout, debug):
-	"Failing MUX case"
+	"Failing MUX case with missing default statement. Must throw error."
 	counter = Signal(modbv(0)[8:])
 	@always_seq(clk.posedge, reset)
 	def worker():
 		if ce:
 			counter.next = counter + 1
+
 	@always_comb
 	def assign():
 		if counter == 0:
-			dout.next = 1
+			dout.next = 20
+			debug.next = False
 		elif counter <= 15:
-			dout.next = 0
-			debug.next = 1
+			dout.next = 21
+			debug.next = True
+		# Missing else:
 
 	return instances()
 
@@ -332,29 +388,110 @@ def unused_pin(clk, ce, reset, dout, debug):
 
 	return instances()
 
+@block
+def simple_sr(clk, ce, reset, dout, debug):
+	"Simple parametric shift register"
+	counter = Signal(modbv(0)[8:])
+	cr = ResetSignal(0, 1, isasync = False)
+
+	ctr = up_counter(clk, ce, cr, counter)
+	PIPE_RESET_BRANCH = 0b0001
+	PIPELEN = 4
+	pipe_valid = Signal(modbv(0)[PIPELEN:])
+
+	@always_seq(clk.posedge, reset)
+	def worker():
+		ibranch = counter[5]
+		preset = counter[7]
+
+		if preset == 1:
+			pipe_valid.next = 0b0010
+		elif ibranch == 1:
+			pipe_valid.next = PIPE_RESET_BRANCH
+		else:
+			pipe_valid.next = concat(pipe_valid[PIPELEN-1:], ce)
+
+
+	@always_comb
+	def assign():
+		dout.next = pipe_valid
+		cr.next = reset
+
+	return instances()
+
+@block
+def simple_shift_right(clk, ce, reset, dout, debug):
+	"Arithmetic shift right"
+	counter = Signal(modbv(0)[8:])
+	cr = ResetSignal(0, 1, isasync = False)
+	ctr = up_counter(clk, ce, cr, counter)
+
+	@always(clk.posedge)
+	def worker():
+		index = counter[2:]
+
+		if ce:
+			dout.next = counter[8:2] >> index
+		else:
+			dout.next = counter[8:2].signed() >> index
+
+		debug.next = True
+
+	@always_comb
+	def assign():
+		cr.next = reset
+
+	return instances()
+
+
+@block
+def dynamic_slice(clk, ce, reset, dout, debug):
+	"Dynamic slicer example. Infers an external $dynslice blackbox"
+	counter = Signal(modbv(0)[8:])
+	cr = ResetSignal(0, 1, isasync = False)
+
+	ctr = up_counter(clk, ce, cr, counter)
+	PIPE_RESET_BRANCH = 0b0001
+	PIPELEN = 4
+
+	@always(clk.posedge)
+	def worker():
+		index = counter[4:]
+		select = counter[8:4]
+
+		debug.next = select[int(index)]
+
+	@always_comb
+	def assign():
+		dout.next = 0
+		cr.next = reset
+
+	return instances()
+
+
 
 ############################################################################
 # Tests
 
 
-# UUT_LIST = [ simple_expr, simple_reset_expr, proc_expr, process_variables, module_variables,
-#	simple_arith, simple_cases, simple_resize_cases, lfsr8_1, counter_extended]
+UUT_LIST = [ simple_expr, bool_ops, simple_reset_expr, proc_expr, process_variables, module_variables,
+	simple_arith, simple_cases, simple_resize_cases, lfsr8_1, counter_extended]
 
-# UUT_LIST += [ unused_pin ]
+UUT_LIST += [ simple_sr, simple_shift_right ]
 
-UUT_LIST = [ simple_reset_expr ]
+UUT_LIST += [ unused_pin ]
 
-UUT_UNRESOLVED_LIST = [ fail_elif, assign_slice_legacy, assign_slice_new ]
+UUT_UNRESOLVED_LIST = [ dynamic_slice, if_expr, assign_slice_legacy, assign_slice_new, fail_elif ]
 
 @pytest.mark.parametrize("uut", UUT_LIST)
 def test_mapped_uut(uut):
 	arst = False
-	run_conversion(uut, arst, None, True) # No wrapper, no display
+	run_conversion(uut, arst, None, False) # No wrapper, no display
 	run_tb(tb_unit(uut, mapped_uut, arst), 20000)
 
 @pytest.mark.xfail
 @pytest.mark.parametrize("uut", UUT_UNRESOLVED_LIST)
-def _test_unresolved(uut):
+def test_unresolved(uut):
 	arst = False
 	run_conversion(uut, arst, None, True) # No wrapper, display
 	run_tb(tb_unit(uut, mapped_uut, arst), 20000)

@@ -41,13 +41,9 @@ _error.NoCommunication = "No signals communicating to myhdl"
 _error.SimulationEnd = "Premature simulation end"
 _error.OSError = "OSError"
 
-
-class Cosimulation(object):
-
-    """ Cosimulation class. """
-
-    def __init__(self, exe="", **kwargs):
-        """ Construct a cosimulation object. """
+class CosimulationPipe:
+    """Cosimulation pipe base class"""
+    def __init__(self, exe="", capture = False, **kwargs):
         rt, wt = os.pipe()
         rf, wf = os.pipe()
 
@@ -62,13 +58,13 @@ class Cosimulation(object):
         self._rt = rt
         self._wf = wf
 
-        self._fromSignames = fromSignames = []
-        self._fromSizes = fromSizes = []
-        self._fromSigs = fromSigs = []
-        self._toSignames = toSignames = []
-        self._toSizes = toSizes = []
-        self._toSigs = toSigs = []
-        self._toSigDict = toSigDict = {}
+        self._fromSignames = []
+        self._fromSizes = []
+        self._fromSigs = []
+        self._toSignames = []
+        self._toSizes = []
+        self._toSigs = []
+        self._toSigDict = {}
         self._hasChange = 0
         self._getMode = 1
 
@@ -90,17 +86,27 @@ class Cosimulation(object):
 
 
         try:
-            sp = subprocess.Popen(exe, env=env, close_fds=False)
+            if capture:
+                sp = subprocess.Popen(exe, env=env, close_fds=False, \
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            else:
+                sp = subprocess.Popen(exe, env=env, close_fds=False)
         except OSError as e:
             raise CosimulationError(_error.OSError, str(e))
 
         self._child = sp
+        self.capture = capture
 
         os.close(wt)
         os.close(rf)
+
+        self.run_cosim(**kwargs)
+
+    def run_cosim(self, **kwargs):
         while 1:
-            s = to_str(os.read(rt, _MAXLINE))
+            s = to_str(os.read(self._rt, _MAXLINE))
             if not s:
+                self.dump_output()
                 raise CosimulationError(_error.SimulationEnd)
             e = s.split()
             if e[0] == "FROM":
@@ -108,32 +114,32 @@ class Cosimulation(object):
                     raise CosimulationError(_error.TimeZero, "$from_myhdl")
                 for i in range(2, len(e) - 1, 2):
                     n = e[i]
-                    if n in fromSignames:
+                    if n in self._fromSignames:
                         raise CosimulationError(_error.DuplicateSigNames, n)
                     if not n in kwargs:
                         raise CosimulationError(_error.SigNotFound, n)
-                    fromSignames.append(n)
-                    fromSigs.append(kwargs[n])
-                    fromSizes.append(int(e[i + 1]))
-                os.write(wf, b"OK")
+                    self._fromSignames.append(n)
+                    self._fromSigs.append(kwargs[n])
+                    self._fromSizes.append(int(e[i + 1]))
+                os.write(self._wf, b"OK")
             elif e[0] == "TO":
                 if int(e[1]) != 0:
                     raise CosimulationError(_error.TimeZero, "$to_myhdl")
                 for i in range(2, len(e) - 1, 2):
                     n = e[i]
-                    if n in toSignames:
+                    if n in self._toSignames:
                         raise CosimulationError(_error.DuplicateSigNames, n)
                     if not n in kwargs:
                         raise CosimulationError(_error.SigNotFound, n)
-                    toSignames.append(n)
-                    toSigs.append(kwargs[n])
-                    toSigDict[n] = kwargs[n]
-                    toSizes.append(int(e[i + 1]))
-                os.write(wf, b"OK")
+                    self._toSignames.append(n)
+                    self._toSigs.append(kwargs[n])
+                    self._toSigDict[n] = kwargs[n]
+                    self._toSizes.append(int(e[i + 1]))
+                os.write(self._wf, b"OK")
             elif e[0] == "START":
-                if not toSignames:
+                if not self._toSignames:
                     raise CosimulationError(_error.NoCommunication)
-                os.write(wf, b"OK")
+                os.write(self._wf, b"OK")
                 break
             else:
                 raise CosimulationError("Unexpected cosim input")
@@ -143,6 +149,7 @@ class Cosimulation(object):
             return
         buf = to_str(os.read(self._rt, _MAXLINE))
         if not buf:
+            self.dump_output()
             raise CosimulationError(_error.SimulationEnd)
         e = buf.split()
         for i in range(1, len(e), 2):
@@ -188,3 +195,25 @@ class Cosimulation(object):
         while 1:
             yield sigs
             self._hasChange = 1
+
+    def dump_output(self):
+        if self.capture:
+            c = self._child.communicate()
+            print("==== COSIM stdout ====")
+            print(c[0].decode('utf8'))
+            try:
+                msg = c[1].decode('utf8')
+                print("==== COSIM stderr ====")
+                print(msg)
+            except:
+                print("==== stderr failed ====")
+
+
+class Cosimulation(CosimulationPipe):
+
+    """ Cosimulation class. """
+
+    def __init__(self, exe="", **kwargs):
+        """ Construct a cosimulation object. """
+        CosimulationPipe.__init__(self, exe, False, **kwargs)
+
