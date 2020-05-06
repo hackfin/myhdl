@@ -452,6 +452,8 @@ def dynamic_slice(clk, ce, reset, dout, debug):
 
 	return instances()
 
+
+
 ############################################################################
 # Tests
 

@@ -23,7 +23,7 @@ from myhdl.conversion._misc import (_get_argnames, _error)
 from pyosys import libyosys as ys
 from myhdl.conversion import yosys_bb
 
-SM_NUM, SM_BOOL, SM_STRING, SM_WIRE, SM_RECORD, SM_VAR, SM_MEMPORT = range(7)
+SM_NUM, SM_BOOL, SM_STRING, SM_WIRE, SM_RECORD, SM_VAR, SM_MEMPORT, SM_ARRAY = range(8)
 
 DEFER_MUX, DEFER_RESERVED = range(2)
 
@@ -228,7 +228,14 @@ class Const:
 					l += 1 # Fixup to compensate python's awareness
 				elif l < 1:
 					l = 1
-				self.const = ys.Const(value, l)
+				# We might run into overflow issues from the yosys side,
+				# create a bit vector then:
+				if l == 32:
+					bitvector = bitfield(value)
+					# print("long val %x[%d]" % (int(value), bits))
+					self.const = ys.Const(bitvector)
+				else:
+					self.const = ys.Const(value, l)
 			else:
 				self.const = ys.Const(value, bits)
 		elif isinstance(value, intbv):
@@ -252,7 +259,7 @@ class Const:
 		else:
 			bitvector = bitfield(v)
 			# print("long val %x[%d]" % (int(value), bits))
-			self.const = ys.Const(bitvector, bits)
+			self.const = ys.Const(bitvector)
 
 	def get(self):
 		return self.const
@@ -409,10 +416,14 @@ class Module:
 		self.wiring = {}
 		self.parent_signals = {}
 		self.memories = {}
+		self.arrays = {}
 		self.inferred_memories = {}  # Maybe temporary: Track inferred memories
 		self.guard = {}
 		self.user = [] # Module users
 		self.implementation = implementation
+
+		self._namespace = \
+			[ self.memories, self.arrays, self.wires, self.parent_signals ]
 	
 	def __getattr__(self, name):
 		return getattr(self.module, name)
@@ -558,6 +569,8 @@ class Module:
 	def findWireByName(self, identifier):
 		if identifier in self.memories:
 			elem = self.memories[identifier]
+		elif identifier in self.arrays:
+			elem = self.arrays[identifier]
 		elif identifier in self.wires:
 			elem = self.wires[identifier]
 		elif identifier in self.wiring:
@@ -1038,10 +1051,10 @@ Used for separation of common functionality of visitor classes"""
 			return f(l, r)
 		elif isinstance(node, ast.Num):
 			return node.n
-		elif isinstance(node, ast.Name):
+		elif hasattr(node, "value"):
 			return node.value
 		else:
-			raise AssertionError("Unsupported op")
+			self.raiseError(node, "Unsupported operator")
 
 	def node_tag(self, node):
 		srcfile = os.path.basename(self.tree.sourcefile)
@@ -1058,14 +1071,18 @@ Used for separation of common functionality of visitor classes"""
 		return OBJ_ID(n, src, ext)
 
 	def setAttr(self, node):
+		"Called upon .next = ..."
 		if node.attr != 'next':
 			self.dbg(node, REDBG, "ERROR ",  "attr " + repr(node.attr))
 		assert node.attr == 'next'
+		self.dbg(node, BLUEBG, "VISIT", node.value)
 		self.visit(node.value)
 		node.obj = self.getObj(node.value)
 		if hasattr(node.value, "syn"):
-			# self.dbg(node, BLUEBG, "PASS ON ASSIGN ",  "sig: " + repr(node.value.id))
+			self.dbg(node, BLUEBG, "PASS ON ASSIGN ",  "sig: %s/%s" % (node.value.id, node.obj._name), )
 			node.syn = node.value.syn # pass on
+
+		node.id = node.value.id
 
 	def getAttr(self, node):
 		if isinstance(node.value, ast.Subscript):
@@ -1123,7 +1140,7 @@ Used for separation of common functionality of visitor classes"""
 			n = sig.size() - i
 		else:
 			i = self.const_eval(upper)
-			n = lower.n - i
+			n = self.const_eval(lower) - i
 
 		if sig.size() < (i + n):
 			self.raiseError(node, "Invalid signal size: %d < %d" % (sig.size(), i + n))
@@ -1183,7 +1200,6 @@ Used for separation of common functionality of visitor classes"""
 			except AttributeError:
 				self.raiseError(node, "Unsynthesized argument %s" % type(obj))
 			if isinstance(i, slice):
-				print(i.start, i.stop)
 				n = i.start - i.stop
 				if n < 0:
 					raise ValueError("Bad slice value")
@@ -1297,12 +1313,12 @@ Used for separation of common functionality of visitor classes"""
 					for n, drv in sm.drivers.items():
 						y, other, default = drv
 						if default:
-							if not clk:
+							if clk == None:
 								self.dbg(stmt, REDBG, "LATCH_WARNING", \
 									"Incomplete assignments, latch created for %s" % n)
 							self.assign_default(n, default, default_assignments)
 						if other:
-							if not clk:
+							if clk == None:
 								self.dbg(stmt, REDBG, "LATCH_WARNING", \
 									"Incomplete assignments, latch created for %s" % n)
 
@@ -1363,6 +1379,7 @@ Used for separation of common functionality of visitor classes"""
 	def handle_mux_table(self, stmt, defaults, drv, n, pos):
 		if isinstance(stmt, ast.Assign):
 			name = stmt.id
+			self.dbg(stmt, BLUEBG, "SET DEFAULT", name)
 			if not name in drv:
 				drv[name] = [ ("default_%d" % i, None) for i in range(n) ]
 			mux_id = self.node_tag(stmt)
@@ -1370,7 +1387,9 @@ Used for separation of common functionality of visitor classes"""
 			drv[name][pos] = (mux_id, stmt.syn.q)
 			if name in defaults:
 				self.dbg(stmt, REDBG, "DEFAULT OVERRIDE", name)
-				raise AssertionError
+				# FIXME:
+				# if name not in self.context.arrays:
+				self.raiseError(stmt, "Default override not allowed")
 			else:
 				defaults[name] = [stmt.syn.q, stmt]
 		elif isinstance(stmt, ast.If):
@@ -1394,7 +1413,7 @@ Used for separation of common functionality of visitor classes"""
 					drv[name][pos] = (mux_id, y)
 
 		elif isinstance(stmt, ast.Pass):
-			self.dbg(stmt, REDBG, "WARNING",  "uncovered else clause")
+			self.dbg(stmt, VIOBG, "NOTICE",  "empty case (pass)")
 		else:
 			self.dbg(stmt, REDBG, "UNSUPPORTED", \
 				"generating mux for %s" % type(stmt))
