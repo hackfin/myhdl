@@ -89,6 +89,24 @@ def simple_reset_expr(clk, ce, reset, dout, debug):
 	return instances()
 
 @block
+def simple_reset_expr(clk, ce, reset, dout, debug):
+	"Simple static expressions"
+	q = Signal(modbv(0)[8:])
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+
+	@always_seq(clk.posedge, reset)
+	def worker():
+		q.next = counter
+
+	@always_comb
+	def assign():
+		dout.next = q
+
+	return instances()
+
+@block
 def proc_expr(clk, ce, reset, dout, debug):
 	"Simple procedural expressions inside concurrent process, 'for' loops"
 	counter = Signal(modbv(0)[8:])
@@ -168,8 +186,6 @@ def module_variables(clk, ce, reset, dout, debug):
 			dout.next = 0
 
 	return instances()
-
-
 
 
 @block
@@ -451,6 +467,8 @@ def dynamic_slice(clk, ce, reset, dout, debug):
 		cr.next = reset
 
 	return instances()
+
+
 
 ############################################################################
 # Tests

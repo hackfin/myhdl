@@ -12,6 +12,8 @@ from random import randrange, seed
 import pytest
 from myhdl.conversion import yshelper
 
+from .test_simple import up_counter
+
 # Yosys blackbox RAM library
 import sys
 sys.path.append("../../../../synthesis/yosys")
@@ -252,7 +254,7 @@ def test_memory(uut, bench):
 	run_tb(cosim_bench(uut, bench), 2000)
 
 def test_ram():
-
+	"""RAM unit test"""
 	def convert(unit):
 		a, b = [ ram.RAMport(8, 8) for i in range(2) ]
 
@@ -262,7 +264,6 @@ def test_ram():
 
 		dpram.convert("yosys_module", design, name="dpram", trace=True)
 
-		# design.display_dir()
 		return design
 	ram_design = convert(ram.dpram_r1w1)
 
@@ -272,6 +273,43 @@ def test_ram():
 	tb.config_sim(backend = 'myhdl', timescale="1ps", trace=True)
 	tb.run_sim()
 	tb.quit_sim()
+
+
+@block
+def flipflop_chain(clk, ce, reset, dout, debug):
+	"""The delay `chain` tuple is pre-detected as memory, but is in fact
+treated as an array of registers, because addressing is static"""
+	counter = Signal(modbv(0)[8:])
+	cr = ResetSignal(0, 1, isasync = False)
+	ctr = up_counter(clk, ce, cr, counter)
+
+	# This is internally created as a memory object (future: array)
+	chain = [ Signal(intbv(0)[8:]) for i in range(2) ]
+
+	@always(clk.posedge)
+	def worker():
+		index = counter[2:]
+
+		if ce:
+			chain[1].next = chain[0]
+			chain[0].next = counter
+
+		dout.next = chain[1]
+		debug.next = True
+
+	@always_comb
+	def assign():
+		cr.next = reset
+
+	return instances()
+
+UUT_LIST_STDTEST = [ flipflop_chain ]
+
+@pytest.mark.parametrize("uut", UUT_LIST_STDTEST)
+def test_mapped_uut(uut):
+	arst = False
+	run_conversion(uut, arst, None, False) # No wrapper, no display
+	run_tb(tb_unit(uut, mapped_uut, arst), 20000)
 
 # Currently unsupported:
 UUT_LIST_FAIL = [ (rom1a, RomBench) ]

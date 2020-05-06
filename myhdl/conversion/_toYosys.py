@@ -60,6 +60,9 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		self.state = S_NEUTRAL
 		self.cur_enable = None
 		self.cur_module = "undefined"
+		self.srcformat = "%s:%d"
+		# self.srcformat = "%s:%d$"
+
 
 	def generic_visit(self, node):
 		self.depth += 1
@@ -88,7 +91,11 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			node.syn = sm
 		else:
 			# Assume we're constant
-			res = self.const_eval(node)
+			try:
+				res = self.const_eval(node)
+			except AttributeError:
+				self.raiseError(node, "Unhandled type %s" % type(node))
+
 			node.value = res # Hack: set .value for get_index()
 
 	def visit_BoolOp(self, node):
@@ -203,7 +210,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			node.id = drvname
 			if hasattr(lhs, "syn"):
 				# We already have an assigned port
-				self.dbg(node, BLUEBG, "ASSIGN", "assign '%s' to preassigned Port %s size %d" % (drvname, lhs.obj._origname, lhs.syn.q.size()))
+				self.dbg(node, BLUEBG, "ASSIGN", "assign '%s' to preassigned Port %s size %d" % (drvname, lhs.id, lhs.syn.q.size()))
 				dst = lhs.syn.q
 				# Special case: detect memory cell read/write:
 				if lhs.syn.el_type == SM_MEMPORT:
@@ -257,16 +264,18 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		# Handle synthesis mapping / resizes:
 
 		if not sm:
-			# print("dst: %d  src: %d" % (dst.size(), src.size()))
 			if dst.size() > src.size():
 				self.dbg(node, BLUEBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
-				src.extend_u0(dst.size(), rhs.syn.is_signed)
+				tmp = ys.SigSpec(src) # Create a copy, don't extend original:
+				tmp.extend_u0(dst.size(), rhs.syn.is_signed)
+				src = tmp
 			elif dst.size() < src.size():
 				if rhs.syn.trunc:
 					self.dbg(node, REDBG, "TRUNC", "Implicit carry truncate: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
 					src = src.extract(0, dst.size())
 				else:
-					self.raiseError(node, "OVERFLOW const value: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
+					# self.dbg(node, REDBG, "OVERFLOW", "%s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
+					self.raiseError(node, "OVERFLOW value: %s[%d:] <= x[%d:]" %(lhs.obj._name, dst.size(), src.size()))
 
 			sm = SynthesisMapper(t)
 			sm.q = src
@@ -291,7 +300,6 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			src = arg.syn.q
 			# src.extend_u0(src.size(), True)
 			self.dbg(node, BLUEBG, "\tTYPE", "%s" % (type(arg)))
-			self.dbg(node, GREEN, "SIGNED NUM", "len:%d" % (src.size()))
 			arg.syn.is_signed = True
 			node.syn = arg.syn # Pass on
 		elif f is intbv:
@@ -309,6 +317,8 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				val = node.args[0]
 				self.visit(val)
 				node.syn = val.syn
+		elif f is len:
+			node.value = len(node.args[0].obj)
 		elif f is int:
 			val = node.args[0]
 			self.visit(val)
@@ -327,18 +337,30 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		elif f is myhdl.StopSimulation:
 			self.dbg(node, REDBG, "RAISE FUNCTION", f)
 		else:
-			try:
-				args = tuple([ i.value for i in node.args ])
-				result = f(*args)
-				if isinstance(result, intbv):
-					self.dbg(node, REDBG, "FUNCTION intbv", "size: %d" % len(result))
+			args = []
+			for i in node.args:
+				self.visit(i)
+				if not hasattr(i, 'value'):
+					self.raiseError(node, "Unsupported (signal?) argument type for %s()" % f.__name__)
+					# self.dbg(node, REDBG, "SYNTH_FUNCTION", "synthesized result to func %s" % f.__name__)
 				else:
-					self.raiseError(node, "Unsupported return type from %s" % f.__name__)
-			except AttributeError:
-				self.raiseError(node, "Unsupported function type %s" % f.__name__)
+					args.append(i.value) # Static value
+			# except AttributeError:
+			# 	self.raiseError(node, "Unsupported argument type %s" % node.args)
+
+			self.dbg(node, REDBG, "FUNCTION ", "fn: %s args: %s" % (f.__name__, repr(args)))
+
+			result = f(*args)
+			if isinstance(result, intbv):
+				self.dbg(node, VIOBG, "FUNCTION intbv", "size: %d" % len(result))
+				l = len(result)
+			elif isinstance(result, int):
+				l = result.bit_length()
+			else:
+				self.raiseError(node, "Unsupported return type from %s" % f.__name__)
 
 			sm = SynthesisMapper(SM_WIRE)
-			sm.q = ConstSignal(result, len(result))
+			sm.q = ConstSignal(result, l)
 			node.syn = sm
 			
 
@@ -373,7 +395,11 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		node.syn = sm
 
 	def visit_Num(self, node):
-		node.syn = ConstDriver(node.value)
+		try:
+			node.syn = ConstDriver(node.value)
+		except OverflowError:
+			self.raiseError(node, "Overflow error for value %d" % (node.value))
+
 #
 #	def visit_Str(self, node):
 #		print(_n())
@@ -419,17 +445,8 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			else:
 				self.mapToMux(node)
 
-#				for n, i in node.defaults.items():
-#					self.dbg(i[1], GREEN, "DEFAULT ASSIGNMENT", "%s" % n)
-#					print(n, i)
-#				z = input("HIT RETURN")
-
 		else:
-			self.dbg(node, REDBG, "WARN", "no fullcase attr in sync process")
-
-
-
-		# self.tie_defaults(node, defaults)
+			self.dbg(node, VIOBG, "NOTICE", "no fullcase attr in sync process")
 
 	def visit_IfExp(self, node):
 		self.generic_visit(node)
@@ -563,7 +580,10 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		
 		w = m.findWireByName(node.id)
 		if w:
-			sm = SynthesisMapper(SM_WIRE, is_signed)
+			if isinstance(w, (tuple, list)):
+				sm = SynthesisMapper(SM_ARRAY, False)
+			else:
+				sm = SynthesisMapper(SM_WIRE, is_signed)
 			sm.q = w
 			node.syn = sm
 		elif node.id in self.tree.vardict:
@@ -576,7 +596,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				self.variables[node.id] = None
 		else:
 			if hasattr(node, "value") and isinstance(node.value, int):
-				self.dbg(node, REDBG, "possibly accessing module wide variable", node.id)
+				self.dbg(node, VIOBG, "possibly accessing module wide variable", node.id)
 				sm = ConstDriver(node.value)
 			elif node.id in m.memories:
 				mdesc = m.memories[node.id]
@@ -585,10 +605,10 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				sm.q = m.addSignal(name, len(mdesc.elObj))
 			elif node.id in self.tree.symdict:
 				obj = self.tree.symdict[node.id]
-				self.dbg(node, REDBG, "IGNORING TYPE", "%s" % repr(obj))
+				self.dbg(node, VIOBG, "OTHER SYMBOL (DEFINE)", "id: %s, type: %s" % (node.id, repr(obj)))
 				return
 			else:
-				raise KeyError("'%s' not in dictionary" % node.id)
+				self.raiseError(node, "'%s' not in dictionary" % node.id)
 
 			node.syn = sm
 
@@ -633,12 +653,48 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			self.visit(node.slice)
 			node.syn = node.slice.value.syn
 		elif isinstance(obj, (list, tuple)):
-			self.visit(node.value)
-			node.syn = node.value.syn # Pass on
-			self.dbg(node, REDBG, "MEMORY PORT FOR '%s', addr: %s" % (node.value.id, node.slice.value.obj._name))
-			# Memory parameters:
-			node.syn.memid = node.value.id
-			node.syn.addrsig = node.slice.value.obj
+			self.visit(node.slice)
+			v = node.slice.value
+			# If we have a static index, it's not a memory, rather
+			# a register chain. We then create the accessed signals on the fly
+			if isinstance(v, ast.Num):
+				INDEX_FORMAT = "%s[%d]"
+				i = self.const_eval(v)
+				# self.visit(node.value)
+				identifier = node.value.id
+				m = self.context
+				if identifier in m.memories:
+					mem = m.memories[identifier]
+					n = mem.depth
+					siglist = []
+					for j, s in enumerate(node.value.obj):
+						sig = self.context.addSignal(None, len(s))
+						siglist.append(sig)
+						el_id = INDEX_FORMAT % (identifier, j)
+						s._name = el_id
+						self.dbg(node, REDBG, "REMOVE_MEMORY", \
+							"%s not a memory, convert to array" % identifier)
+						m.arrays[el_id] = sig
+
+					m.memories.pop(identifier) # Remove from memories
+
+				el_id = INDEX_FORMAT % (identifier, i)
+				# Hack: Stick subscript identifier into Subscript node
+				node.id = el_id
+				node.obj = obj[i]  # Stick current indexed object into node
+				sig = m.arrays[el_id]
+				sm = SynthesisMapper(SM_WIRE)
+				sm.q = sig
+				node.syn = sm
+			elif isinstance(v.obj, _Signal):
+				# Memory parameters:
+				node.syn = node.value.syn # Pass on
+				node.syn.memid = node.value.id
+				node.syn.addrsig = node.slice.value.obj
+				self.dbg(node, REDBG, "MEMORY PORT FOR '%s', addr: %s" % (node.value.id, v.obj._name))
+			else:
+				self.raiseError(node, "Unsupported indexing construct for type %s" % type(v))
+
 		elif isinstance(obj, (_Signal, intbv) ):
 			self.accessIndex(node)
 		else:
@@ -759,8 +815,6 @@ class _ConvertAlwaysSeqVisitor(_ConvertVisitor):
 		def handle_dff(m, stmt, reset, clk, clkpol = True):
 			# print("Look for clk '%s'" % clk._name)
 			clk = m.findWireByName(clk._name)
-			self.dbg(node, BLUEBG, "VISIT FUNCTION", "%s" % node)
-
 			for name, sig in stmt.syn.drivers.items():
 				gsig = m.findWireByName(name)
 				if gsig:
@@ -864,7 +918,7 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 			else:
 				self.mapToMux(node)
 		else:
-			self.dbg(node, REDBG, "WARN", "no fullcase attr in async process")
+			self.dbg(node, VIOBG, "NOTICE", "no fullcase attr in async process")
 
 def _TYPE(x):
 	return type(x).__name__
@@ -913,7 +967,6 @@ def convert_wires(m, c, a, n):
 		except KeyError:
 			print("UNDEFINED/UNUSED wire, localname: %s, origin: %s" % (a._name, a._origname))
 
-		# z = input("##- HIT RETURN")
 	elif isinstance(a, intbv):
 		l = len(a)
 		# print("CONST (vector len %d) wire" % l)
@@ -971,7 +1024,7 @@ def infer_handle_interface(design, instance, parent_wires):
 	return m
 
 def infer_rtl(h, instance, design, module_signals):
-	print(GREEN + "\tInfer blackbox: '%s'" % instance.name + OFF)
+	print(BLUEBG + "\tInfer blackbox: '%s'" % instance.name + OFF)
 	m = infer_handle_interface(design, instance, module_signals)
 	intf = BBInterface("bb_" + instance.name, m)
 	instance.obj.infer(m, intf)
