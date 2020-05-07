@@ -261,16 +261,18 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		# Handle synthesis mapping / resizes:
 
 		if not sm:
-			# print("dst: %d  src: %d" % (dst.size(), src.size()))
 			if dst.size() > src.size():
 				self.dbg(node, BLUEBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
-				src.extend_u0(dst.size(), rhs.syn.is_signed)
+				tmp = ys.SigSpec(src) # Create a copy, don't extend original:
+				tmp.extend_u0(dst.size(), rhs.syn.is_signed)
+				src = tmp
 			elif dst.size() < src.size():
 				if rhs.syn.trunc:
 					self.dbg(node, REDBG, "TRUNC", "Implicit carry truncate: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
 					src = src.extract(0, dst.size())
 				else:
-					self.raiseError(node, "OVERFLOW const value: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
+					# self.dbg(node, REDBG, "OVERFLOW", "%s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
+					self.raiseError(node, "OVERFLOW value: %s[%d:] <= x[%d:]" %(lhs.obj._name, dst.size(), src.size()))
 
 			sm = SynthesisMapper(t)
 			sm.q = src
@@ -332,18 +334,30 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		elif f is myhdl.StopSimulation:
 			self.dbg(node, REDBG, "RAISE FUNCTION", f)
 		else:
-			try:
-				args = tuple([ i.value for i in node.args ])
-				result = f(*args)
-				if isinstance(result, intbv):
-					self.dbg(node, VIOBG, "FUNCTION intbv", "size: %d" % len(result))
+			args = []
+			for i in node.args:
+				self.visit(i)
+				if not hasattr(i, 'value'):
+					self.raiseError(node, "Unsupported (signal?) argument type for %s()" % f.__name__)
+					# self.dbg(node, REDBG, "SYNTH_FUNCTION", "synthesized result to func %s" % f.__name__)
 				else:
-					self.raiseError(node, "Unsupported return type from %s" % f.__name__)
-			except AttributeError:
-				self.raiseError(node, "Unsupported function type %s" % f.__name__)
+					args.append(i.value) # Static value
+			# except AttributeError:
+			# 	self.raiseError(node, "Unsupported argument type %s" % node.args)
+
+			self.dbg(node, REDBG, "FUNCTION ", "fn: %s args: %s" % (f.__name__, repr(args)))
+
+			result = f(*args)
+			if isinstance(result, intbv):
+				self.dbg(node, VIOBG, "FUNCTION intbv", "size: %d" % len(result))
+				l = len(result)
+			elif isinstance(result, int):
+				l = result.bit_length()
+			else:
+				self.raiseError(node, "Unsupported return type from %s" % f.__name__)
 
 			sm = SynthesisMapper(SM_WIRE)
-			sm.q = ConstSignal(result, len(result))
+			sm.q = ConstSignal(result, l)
 			node.syn = sm
 			
 
@@ -428,15 +442,8 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			else:
 				self.mapToMux(node)
 
-#				for n, i in node.defaults.items():
-#					self.dbg(i[1], GREEN, "DEFAULT ASSIGNMENT", "%s" % n)
-#					print(n, i)
-#				z = input("HIT RETURN")
-
 		else:
 			self.dbg(node, VIOBG, "NOTICE", "no fullcase attr in sync process")
-
-		# self.tie_defaults(node, defaults)
 
 	def visit_IfExp(self, node):
 		self.generic_visit(node)
@@ -598,7 +605,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				self.dbg(node, VIOBG, "OTHER SYMBOL (DEFINE)", "id: %s, type: %s" % (node.id, repr(obj)))
 				return
 			else:
-				raise KeyError("'%s' not in dictionary" % node.id)
+				self.raiseError(node, "'%s' not in dictionary" % node.id)
 
 			node.syn = sm
 
@@ -957,7 +964,6 @@ def convert_wires(m, c, a, n):
 		except KeyError:
 			print("UNDEFINED/UNUSED wire, localname: %s, origin: %s" % (a._name, a._origname))
 
-		# z = input("##- HIT RETURN")
 	elif isinstance(a, intbv):
 		l = len(a)
 		# print("CONST (vector len %d) wire" % l)

@@ -488,14 +488,15 @@ class Module:
 	def connect(self, dst, src):
 		if dst.size() != src.size():
 			print(dst.size(), src.size())
-			raise ValueError("Signals '%s' and '%s' don't have the same size" % (dst.as_wire().name, src.as_wire().name))
+			raise ValueError("Signals '%s' and '%s' don't have the same size" % \
+				(dst.as_wire().name, src.as_wire().name))
 		return self.module.connect(dst, src)
 
 	def guard_name(self, name, which):
 		if name in self.guard:
+			self.dbg(node, REDBG, "PROHIBITED",  "Note: Override assignments not permitted for signals")
 			raise KeyError("%s already used : %s" % (name, repr(self.guard[name])))
 		self.guard[name] = which
-
 
 	def addWire(self, name, n, public=False):
 		# print(type(name))
@@ -653,17 +654,37 @@ class Module:
 			except AttributeError:
 				raise ValueError("Unhandled object type %s for %s" % (type(arg), name))
 			
+	def collectAliases(self, sig, name):
+		"Collect alias signals from Shadow signal"
+		shadow_sig = self.addSignal(None, 0)
+		for a in reversed(sig._args):
+			if isinstance(a, _Signal):
+				elem = self.findWireByName(a._name)
+				if not elem:
+					raise KeyError("%s not found" % a._name)
+			elif isinstance(a, (intbv, bool)):
+				elem = ConstSignal(a)
+			else:
+				raise ValueError("Unsupported alias argument in ConcatSignal")
+
+			shadow_sig.append(elem)
+
+		self.wires[name] = shadow_sig
 
 
 	def collectWires(self, instance, args):
 
 		def insert_wire(wtype, d, n, s):
 			if isinstance(s._val, EnumItemType):
-				d[n] = self.addSignal(n, s._nrbits)
+				w = self.addSignal(n, s._nrbits)
+				d[n] = w
+				return w
 			else:
 				# print("%s Wire %s type %s, init: %d" % (wtype, n, repr(s._type), s._init))
 				l = get_size(s)
-				d[n] = self.addSignal(n, l)
+				w = self.addSignal(n, l)
+				d[n] = w
+				return w
 
 		# Grab wiring from instance analysys
 		self.wiring = instance.wiring
@@ -697,11 +718,29 @@ class Module:
 				initvalues[n] = s._init
 	
 		# Collect remaining symbols, typically locally defined ones:
+		shadow_syms = []
 		for n, s in sigs.items():
 			if not n in blk.argdict and not n in ps:
-				insert_wire("INTERNAL", d, n, s)
-				initvalues[n] = s._init
+				if isinstance(s, _ShadowSignal):
+					shadow_syms.append((n, s))
+				else:
+					w = insert_wire("INTERNAL", d, n, s)
+					initvalues[n] = s._init
 
+
+
+		for n, s in sigs.items():
+			for sl in s._slicesigs:
+				w = self.findWireByName(s._name)
+				if sl._right:
+					sls = w.extract(sl._right, sl._left - sl._right)
+				else:
+					sls = w.extract(sl._left, 1)
+				d[sl._name] = sls
+
+		for i in shadow_syms:
+			n, s = i
+			self.collectAliases(s, n)
 		
 		self.module.fixup_ports()
 
@@ -913,7 +952,7 @@ class Instance:
 				raise ConversionError(_error.UndefinedBitWidth, s._name)
 			# slice signals
 			for sl in s._slicesigs:
-				sl._setName(hdl)
+				sl._setName("Verilog")
 			siglist.append(s)
 		# list of signals
 		for n, m in memdict.items():
