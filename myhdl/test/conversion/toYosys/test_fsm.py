@@ -64,52 +64,6 @@ OPCODE = slice(5, 3)
 MODE   = slice(3, 1)
 FLAG   = 0
 
-@block
-def complex_select(clk, ce, reset, dout, debug):
-	"Complex selection test"
-
-	counter = Signal(modbv(0)[8:])
-	state = Signal(t_state.RESET)
-	cr = ResetSignal(0, 1, isasync = False)
-
-	ctr = up_counter(clk, ce, cr, counter)
-
-	@always_comb
-	def worker():
-		op = counter[OPCODE]
-		k = counter[MODE]
-		f = counter[FLAG]
-
-		isdebug = False
-
-		if op == 0b00:
-			if ce:
-				dout.next = 0xaa
-			else:
-				dout.next = 0xff
-		elif op == 0b01:
-			if k == 0:
-				if f:
-					isdebug = True
-					dout.next = 0x50
-				else:
-					dout.next = 0x10
-			elif k == 2:
-				dout.next = 0x51
-			else:
-				dout.next = 0x55
-		elif op == 0b10:
-			dout.next = 0xfa
-		else: 
-			dout.next = 0xff
-
-		debug.next = isdebug
-
-	@always_comb
-	def assign():
-		cr.next = reset
-
-	return instances()
 
 @block
 def simple_fsm_implicit_else(clk, ce, reset, dout, debug):
@@ -252,7 +206,7 @@ def simple_fsm_muxvariable(clk, ce, reset, dout, debug):
 
 	return instances()
 
-UUT_LIST = [ complex_fsm, complex_select ]
+UUT_LIST = [ complex_fsm ]
 UUT_LIST += [ simple_fsm_implicit_else, simple_fsm_variable_default, simple_fsm_muxvariable ]
 
 # This list should be empty when all is implemented:

@@ -494,7 +494,6 @@ class Module:
 
 	def guard_name(self, name, which):
 		if name in self.guard:
-			self.dbg(node, REDBG, "PROHIBITED",  "Note: Override assignments not permitted for signals")
 			raise KeyError("%s already used : %s" % (name, repr(self.guard[name])))
 		self.guard[name] = which
 
@@ -1056,11 +1055,6 @@ class VisitorHelper(DebugOutput):
 	"""Visitor helper class for yosys interfacing
 Used for separation of common functionality of visitor classes"""
 
-	if DebugOutput.debug:
-		srcformat = "%s:%d"
-	else:
-		srcformat = "%s:%d$"
-
 	# Note: Python3 specific
 	_opmap_reduce_const = {
 		ast.Add		 : int.__add__,
@@ -1277,15 +1271,24 @@ Used for separation of common functionality of visitor classes"""
 
 		return c, en
 
-	def assign_default(self, name, dst, defdict):
+	def assign_default(self, name, dst, defdict, toplevel = False):
 		m = self.context
 		if name in defdict:
 			previous = defdict[name][0]
 			ret = True
-		else:
+		# When on toplevel, we can assume default = previous value
+		elif toplevel:
 			w = m.findWireByName(name)
-			previous = w if w else self.variables[name].q
-			ret = False
+			if w:
+				previous = w
+				ret = 2
+			elif name in self.variables:
+				previous = self.variables[name]
+				ret = True
+			else:
+				return False
+		else:
+			return False
 
 		m.connect(dst, previous)
 		return ret
@@ -1304,9 +1307,10 @@ Used for separation of common functionality of visitor classes"""
 				for n, drv in sm.drivers.items():
 					y, other, default = drv
 					if default:
-						self.assign_default(n, default, default_assignments)
+						print("TIE DEFAULT", n)
+						self.assign_default(n, default, default_assignments, True)
 					if other:
-						self.assign_default(n, other, default_assignments)
+						self.assign_default(n, other, default_assignments, True)
 
 					if n in default_assignments:
 						default_assignments[n][2] = False # Clear flag
@@ -1319,8 +1323,6 @@ Used for separation of common functionality of visitor classes"""
 				lhs = stmt.targets[0]
 				n = stmt.id
 				if not n in default_assignments:
-					# We need to store a COPY of the current output value
-					# in the first field, because it may change during scanning
 					default_assignments[n] = [stmt.syn.q, stmt, True]
 				else:
 					self.dbg(stmt, REDBG, "WARNING", "Overriding statement")
@@ -1335,7 +1337,6 @@ Used for separation of common functionality of visitor classes"""
 				i[1].syn.drivers = { n : [i[0], None, None] }
 				func(m, i[1], reset, clk, clkpol)
 
-		
 	def handle_toplevel_process(self, node, func, clk, clkpol = False):
 		"Handle top level processes"
 		m = self.context
@@ -1352,16 +1353,16 @@ Used for separation of common functionality of visitor classes"""
 					for n, drv in sm.drivers.items():
 						y, other, default = drv
 						if default:
-							if clk == None:
+							ret = self.assign_default(n, default, default_assignments, True)
+							if clk == None and ret == 2:
 								self.dbg(stmt, REDBG, "LATCH_WARNING", \
-									"Incomplete assignments, latch created for %s" % n)
-							self.assign_default(n, default, default_assignments)
+									"Incomplete 'default' assignments, latch created for %s" % n)
 						if other:
-							if clk == None:
+							ret = self.assign_default(n, other, default_assignments, True)
+							if clk == None and ret == 2:
 								self.dbg(stmt, REDBG, "LATCH_WARNING", \
-									"Incomplete assignments, latch created for %s" % n)
+									"Incomplete 'other' assignments, latch created for %s" % n)
 
-							self.assign_default(n, other, default_assignments)
 
 						if n in default_assignments:
 							default_assignments[n][2] = False
@@ -1371,7 +1372,7 @@ Used for separation of common functionality of visitor classes"""
 				# This gets nasty. An assigment can be a default signal for subsequent
 				# assignments, or a one time thing.
 				lhs = stmt.targets[0]
-				n = stmt.id
+				name = stmt.id
 				if isinstance(lhs, ast.Name):
 					pass
 				elif isinstance(lhs.obj, _Signal):
@@ -1384,15 +1385,13 @@ Used for separation of common functionality of visitor classes"""
 							self.dbg(stmt, REDBG, "LEGACY_ASSIGN", rhs.syn.q)
 							m.connect(lhs.syn.q, rhs.syn.q)
 					else:
-						name = lhs.value.id
-						self.variables[name] = rhs.obj
+						self.variables[lhs.value.id] = rhs.obj
 
-				if not n in default_assignments:
-					# We need to store a COPY of the current output value
-					# in the first field, because it may change during scanning
-					default_assignments[n] = [stmt.syn.q, stmt, True]
+				if not name in default_assignments:
+					default_assignments[name] = [stmt.syn.q, stmt, True]
 				else:
 					self.dbg(stmt, REDBG, "WARNING", "Overriding statement")
+
 			# Special treatment for memory port without condition:
 			# Wire EN pins to True
 			elif isinstance(stmt, ast.For):
@@ -1415,7 +1414,8 @@ Used for separation of common functionality of visitor classes"""
 				i[1].syn.drivers = { n : [i[0], None, None] }
 				func(m, i[1], clk, clkpol)
 
-	def handle_mux_table(self, stmt, defaults, drv, n, pos):
+	def handle_mux_table(self, stmt, defaults, implicit, drv, n, pos):
+
 		if isinstance(stmt, ast.Assign):
 			name = stmt.id
 			self.dbg(stmt, BLUEBG, "SET DEFAULT", name)
@@ -1430,7 +1430,8 @@ Used for separation of common functionality of visitor classes"""
 				# if name not in self.context.arrays:
 				self.raiseError(stmt, "Default override not allowed")
 			else:
-				defaults[name] = [stmt.syn.q, stmt]
+				defaults[name] = [stmt.syn.q, stmt] # Local default
+
 		elif isinstance(stmt, ast.If):
 			if stmt.ignore:
 				return
@@ -1440,10 +1441,27 @@ Used for separation of common functionality of visitor classes"""
 				mux_id = self.node_tag(stmt)
 				y, other, default = stmt.syn.drivers[name] # Get output, other and default sources
 
+				ret0, ret1 = True, True
+
 				if other:
-					self.assign_default(name, other, defaults)
+#					self.dbg(stmt, REDBG, "IMPLICIT_WARNING", \
+#						"(other) missing assignments, assuming defaults for %s" % name)
+					ret0 = self.assign_default(name, other, defaults)
+					if not ret0:
+						self.dbg(stmt, REDBG, "APPEND OPEN OTHER", "%s" % name)
+
 				if default:
-					self.assign_default(name, default, defaults)
+#					self.dbg(stmt, REDBG, "IMPLICIT_WARNING", \
+#						"(default) missing assignments, assuming defaults %s" % name)
+					ret1 = self.assign_default(name, default, defaults)
+					if not ret1:
+						self.dbg(stmt, REDBG, "APPEND OPEN DEFAULT", "%s" % name)
+
+				if ret0 or ret1:
+					if name in implicit:
+						implicit[name].append([other, default])
+					else:
+						implicit[name] = [[other, default]]
 
 				if name in drv:
 					drv[name][pos] = (mux_id, y)
@@ -1458,27 +1476,14 @@ Used for separation of common functionality of visitor classes"""
 				"generating mux for %s" % type(stmt))
 			raise AssertionError("Unhandled statement")
 
-
-		# We create a record for this driver pool:
-		sm = SynthesisMapper(SM_RECORD)
-		for name, item in drv.items():
-			# self.dbg(stmt, BLUEBG, "PROCESS driver", "%s" % name)
-			if hasattr(item, "sources") and 'enable' in item.sources:
-				self.dbg(stmt, REDBG, "SOURCE", "Open source from %s" % item.memid)
-			else:
-				if name in self.variables:
-					pass
-
-	def create_mux_table(self, node):
+	def create_mux_table(self, node, implicit):
 		m = self.context
 		n = len(node.tests)
 		n += 1
 
-
 		# We store all potential signal drivers in this node
 		# context:
 		node.drivers = drivers = {}
-
 		decision_signals = []
 		sm = SynthesisMapper(SM_RECORD)
 		sm.drivers = {}
@@ -1489,24 +1494,26 @@ Used for separation of common functionality of visitor classes"""
 			decision_signals.append(sig_s)
 			defaults = {}
 			for stmt in suite:
-				self.handle_mux_table(stmt, defaults, drivers, n, c)
+				self.handle_mux_table(stmt, defaults, implicit, drivers, n, c)
 			c += 1
 
 		defaults = {}
 		# If we have an else clause, store at col 0 in table
 		for stmt in node.else_:
-			self.handle_mux_table(stmt, defaults, drivers, n, 0)
+			self.handle_mux_table(stmt, defaults, implicit, drivers, n, 0)
 
 		node.syn = sm
 
-		return defaults, decision_signals
+		return decision_signals
 
 
 	def mapToPmux(self, node):
-		defaults, decision_signals = self.create_mux_table(node)
+		node.implicit = implicit = {}
+		decision_signals = self.create_mux_table(node, implicit)
 
 		m = self.context
 		for dr_id, drivers in node.drivers.items():
+			self.dbg(node, GREEN, "PMUX WALK DRV >>>", dr_id)
 			w = m.findWireByName(dr_id)
 			proto = w if w else self.variables[dr_id].q
 			size = proto.size()
@@ -1533,7 +1540,7 @@ Used for separation of common functionality of visitor classes"""
 				other = None # Mark in driver map we're fully resolved
 			else:
 				# Create an open 'other' signal
-				name = self.genid(node, "default_%s" % dr_id)
+				name = self.genid(node, "%s_other" % dr_id)
 				other = o = m.addSignal(name, size)
 	
 			y = m.addSignal(self.genid(node, dr_id + "_out"), size)
@@ -1542,10 +1549,11 @@ Used for separation of common functionality of visitor classes"""
 
 			m.addPmux(name, o, varray, cc, y)
 			node.syn.drivers[dr_id] = [ y, other, default ]
-
+			self.tie_implicit(node, dr_id)
 
 	def mapToMux(self, node):
-		defaults, decision_signals = self.create_mux_table(node)
+		node.implicit = implicit = {}
+		decision_signals = self.create_mux_table(node, implicit)
 
 		m = self.context
 		for dr_id, drivers in node.drivers.items():
@@ -1593,7 +1601,7 @@ Used for separation of common functionality of visitor classes"""
 			mux_id, drv = drivers[-1]
 			if not drv:
 				if not default:
-					name = self.genid(node, "%s_defaultL" % dr_id)
+					name = self.genid(mux_id, "%s_default_last" % dr_id)
 					default = m.addSignal(name, size)
 				drv = default
 
@@ -1605,7 +1613,39 @@ Used for separation of common functionality of visitor classes"""
 			# tracking map:
 			node.syn.drivers[dr_id] = [ chain_out, else_sig, default ]
 
+			self.tie_implicit(node, dr_id)
 
+
+	def tie_implicit(self, node, dr_id):
+		"""Ties implicitely-assigned signals to a default and eventually pass it on to upper level"""
+		chain_out, other, default = node.syn.drivers[dr_id]
+		m = self.context
+
+		# First, we can tie other to default. Then we can take it out of 'open drivers' list.
+		if other and default:
+			m.connect(other, default)
+			node.syn.drivers[dr_id][1] = None
+
+		# Now we collect all open drivers from .implicit lists. These are the 'open' and 'default'
+		# drivers collected from lower hierarchies.
+		if dr_id in node.implicit:
+			for o, d in node.implicit[dr_id]:
+				if d:
+					if not default:
+						name = self.genid(node, "%s_tie_default" % dr_id)
+						default = m.addSignal(name, d.size())
+						node.syn.drivers[dr_id][2] = default
+					m.connect(d, default)
+				elif o:
+					if not other:
+						if not default:
+							name = self.genid(node, "%s_tie_other" % dr_id)
+							other = m.addSignal(name, o.size())
+							m.connect(o, other)
+							node.syn.drivers[dr_id][1] = other
+					else:
+						m.connect(o, other)
+		
 	def handle_toplevel_assignment(self, stmt):
 		"Auxiliary for signal wiring"
 
@@ -1623,7 +1663,8 @@ Used for separation of common functionality of visitor classes"""
 				portname = m.wiring[oname][0]
 				outsig = m.findWireByName(name)
 				signame = outsig.as_wire().name
-				self.dbg(stmt, GREEN, "PORT ASSIGN", "PORT local: '%s', port: '%s', sig: %s" % (name, portname, signame))
+				self.dbg(stmt, GREEN, "PORT ASSIGN", \
+					"PORT local: '%s', port: '%s', sig: %s" % (name, portname, signame))
 				dst, src = (outsig, result)
 			else:
 				# Try find a locally declared signal:
@@ -1631,7 +1672,8 @@ Used for separation of common functionality of visitor classes"""
 				if outsig:
 					dst, src = (outsig, result)
 				else:
-					self.dbg(stmt, REDBG, "UNCONNECTED", "PORT local: '%s', orig: '%s'" % (name, oname))
+					self.dbg(stmt, REDBG, "UNCONNECTED", \
+						"PORT local: '%s', orig: '%s'" % (name, oname))
 					raise AssertionError
 		else:
 			outsig = m.findWireByName(name)

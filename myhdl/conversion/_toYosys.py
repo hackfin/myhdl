@@ -60,6 +60,9 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		self.state = S_NEUTRAL
 		self.cur_enable = None
 		self.cur_module = "undefined"
+		self.srcformat = "%s:%d"
+		# self.srcformat = "%s:%d$"
+
 
 	def generic_visit(self, node):
 		self.depth += 1
