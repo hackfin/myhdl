@@ -128,7 +128,6 @@ def complex_select(clk, ce, reset, dout, debug):
 	"Complex selection test"
 
 	counter = Signal(modbv(0)[8:])
-	state = Signal(t_state.RESET)
 	cr = ResetSignal(0, 1, isasync = False)
 
 	ctr = up_counter(clk, ce, cr, counter)
