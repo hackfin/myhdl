@@ -134,9 +134,13 @@ class Design:
 	def get(self):
 		return self.design
 
-	def addModule(self, name, implementation):
+	def addModule(self, name, implementation, builtin = False):
 		print(GREEN + "Adding module with name:" + OFF, name)
-		m = self.design.addModule(ID(name))
+		if builtin:
+			n = PID(name)
+		else:
+			n = ID(name)
+		m = self.design.addModule(n)
 		return Module(m, implementation)
 
 	def set_top_module(self, top):
@@ -174,6 +178,16 @@ class Design:
 	def import_verilog(self, filename):
 		ys.run_pass("read_verilog %s" % filename, self.design)
 
+	def finalize(self, name = None):
+		"Finalize design so that it is visible"
+		design = self.design
+		m = design.top_module()
+
+		if name == None:
+			name = self.name
+
+		design.rename(m, PID(name))
+
 	def write_verilog(self, name, rename_default = False, rename_signals = True):
 		"Write verilog"
 		ys.run_pass("hierarchy -check")
@@ -192,12 +206,12 @@ class Design:
 
 	def test_synth(self):
 		design = self.design
-		ys.run_pass("write_ilang %s_mapped.il" % self.name, design)
 		ys.run_pass("memory_collect", design)
 		# We don't test on that level yet
 		# ys.run_pass("techmap -map techmap/lutrams_map.v", design)
 		# ys.run_pass("techmap -map ecp5/brams_map.v", design)
 		# ys.run_pass("techmap -map ecp5/cells_map.v", design)
+		ys.run_pass("write_ilang %s_mapped.il" % self.name, design)
 		ys.run_pass("hierarchy -check", design)
 
 
@@ -243,7 +257,7 @@ class Const:
 		elif isinstance(value, bool):
 			self.const = ys.Const(int(value), 1)
 		elif isinstance(value, str):
-			self.const = ys.Const("\\" + value)
+			self.const = ys.Const(value)
 		elif isinstance(value, EnumItemType):
 			self.const = ys.Const(int(value), value._nrbits)
 		else:
@@ -583,7 +597,7 @@ class Module:
 
 		return elem
 
-	def collectArg(self, name, arg):
+	def collectArg(self, name, arg, force_wire = False):
 		d = self.wires
 		if isinstance(arg, _Signal):
 			s = len(arg)
@@ -600,7 +614,7 @@ class Module:
 			# TODO: Clock signal could be flagged for debugging purposes
 			# Currently, it tends to be regarded as 'floating'
 			if is_out:
-				# print("\tWire OUT (%s) %s, parent: %s, driver: %s" % (arg._driven, name, pname, src))
+				#print("\tWire OUT (%s) %s, parent: %s, driver: %s" % (arg._driven, name, pname, src))
 				w.get().port_output = True
 				# If we need to create a register, replace this wire
 				if arg._driven == "reg":	
@@ -610,10 +624,10 @@ class Module:
 					self.connect(buf, sig)
 
 			elif arg._read:
-				# print("\tWire IN %s, parent %s, origin: %s" % (name, pname, src))
+				#print("\tWire IN %s, parent %s, origin: %s" % (name, pname, src))
 				w.get().port_input = True
 			else:
-				# print("\tWire FLOATING %s, parent %s" % (name, pname))
+				print("\tWire FLOATING %s, parent %s" % (name, pname))
 				# FIXME
 				# For now, we allocate this port as a dummy, anyway
 				# Also note: clk ports are not properly marked as 'read'
@@ -623,11 +637,18 @@ class Module:
 			# we need to make sure the cell gets the corresponding parameter
 			self.defaults[name] = arg._init
 			d[name] = sig
-		elif isinstance(arg, int):
-			# print("\tConst Wire %s" % name)
-			d[name] = ConstSignal(arg, arg.bit_length())
-		elif isinstance(arg, bool):
-			d[name] = ConstSignal(arg, 1)
+		elif isinstance(arg, int) or isinstance(arg, bool):
+			if force_wire:
+				if isinstance(arg, bool):
+					s = 1
+				else:
+					t = arg.bit_length()
+					s = t if t > 0 else 1
+				w = self.addWire(name, s, True)
+				w.get().port_input = True
+				d[name] = Signal(w)
+			else:
+				d[name] = ConstSignal(arg)
 		elif isinstance(arg, block):
 			# print("\tSKIP block arg %s" % arg)
 			pass
@@ -667,12 +688,10 @@ class Module:
 				raise ValueError("Unsupported alias argument in ConcatSignal")
 
 			shadow_sig.append(elem)
-
 		self.wires[name] = shadow_sig
 
 
 	def collectWires(self, instance, args):
-
 		def insert_wire(wtype, d, n, s):
 			if isinstance(s._val, EnumItemType):
 				w = self.addSignal(n, s._nrbits)
@@ -695,7 +714,8 @@ class Module:
 		l = len(blk.args)
 		# print("# of block arguments:", l)
 
-		for i, name in enumerate(args):
+		for i, a in enumerate(args):
+			name, param = a
 			# print("ARG", name)
 			if name in sigs:
 				sig = sigs[name]
@@ -715,6 +735,7 @@ class Module:
 			if not n in ps:
 				insert_wire("PARENT", ps, n, s)
 				initvalues[n] = s._init
+
 	
 		# Collect remaining symbols, typically locally defined ones:
 		shadow_syms = []
@@ -725,8 +746,6 @@ class Module:
 				else:
 					w = insert_wire("INTERNAL", d, n, s)
 					initvalues[n] = s._init
-
-
 
 		for n, s in sigs.items():
 			for sl in s._slicesigs:
@@ -750,8 +769,10 @@ class Module:
 
 	def addMemory(self, name):
 		mem = ys.Memory()
-		mem.name = PID(name)
-		self.cache_mem[PID(name)] = mem
+		identifier = PID(name)
+		mem.name = identifier
+		print("ADDING MEMORY %s" % name)
+		self.cache_mem[identifier] = mem
 
 		return mem
 
@@ -776,6 +797,7 @@ class Module:
 
 	def finish(self, design):
 		self.module.memories = self.cache_mem
+		self.module.avail_parameters = self.avail_parameters
 		mname = self.name.str()
 		# self.module.check()
 
@@ -1769,6 +1791,8 @@ class BBInterface:
 		"When defer == True, do not connect outputs"
 		m = self.module
 		for n, i in self.interface.items():
+			# print("wire: arg %s" % n)
+
 			s, direction = i
 			sig = m.findWireByName(n)
 			w = s.as_wire()

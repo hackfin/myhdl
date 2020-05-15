@@ -689,7 +689,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			elif isinstance(v.obj, _Signal):
 				# Memory parameters:
 				node.syn = node.value.syn # Pass on
-				node.syn.memid = node.value.id
+				node.syn.memid = PID(node.value.id)
 				node.syn.addrsig = node.slice.value.obj
 				self.dbg(node, REDBG, "MEMORY PORT FOR '%s', addr: %s" % (node.value.id, v.obj._name))
 			else:
@@ -949,19 +949,15 @@ def convert_wires(m, c, a, n):
 			sig = m.findWire(a)
 			if not sig:
 				raise KeyError("Wire %s not found in signal list" % a._name)
-			if a._driven:
+			if a.driven:
 				# print("ACTIVE wire %s -> %s" % (a._name, n))
 				# port.get().port_output = True
 				# s = Signal(port)
 				c.setPort(n, sig)
 				# m.connect(sig, s)
-			elif a._read:
-				port = m.addWire(None, len(a))
+			elif a.read:
 				# print("PASSIVE wire %s <- %s" % (a._name, n))
-				port.get().port_input = True
-				s = Signal(port)
-				c.setPort(n, s)
-				m.connect(s, sig)
+				c.setPort(n, sig)
 			else:
 				print("FLOATING wire", a._name)
 		except KeyError:
@@ -978,12 +974,7 @@ def convert_wires(m, c, a, n):
 			raise AssertionError("Bad signal size")
 		m.connect(s, sig)
 	elif isinstance(a, int) or isinstance(a, bool):
-		print("CONST wire")
 		print("WARNING: Parameter '%s' handled as constant signal" % n)
-		# FIXME:
-		# Parameters should only be passed on this way to
-		# black box instances
-		# c.setParam(n, a)
 	elif a == None:
 		pass
 	elif hasattr(a, '__dict__'):
@@ -992,6 +983,7 @@ def convert_wires(m, c, a, n):
 			convert_wires(m, c, i[1], n + "_" + i[0])
 	else:
 		raise TypeError("Unsupported wire type for %s: %s" % (n, type(a).__name__))
+
 		
 def infer_handle_interface(design, instance, parent_wires):
 	blk = instance.obj
@@ -1001,22 +993,12 @@ def infer_handle_interface(design, instance, parent_wires):
 	key = create_key(blk)
 	m = design.addModule(key, instance)
 
-#	for i in siglist:
-#		print(i._name)
-	# print(blk.argdict)
-	argnames = inspect.signature(blk.func).parameters.keys()
-	# print("ARGS", blk.args)
-	# print("ARGN", argnames)
-
-	impl = blk
-	for i, n in enumerate(argnames):
-		try:
-			a = impl.args[i]
-		except IndexError:
-			print("ERROR, index out of range")
-			print(argnames)
-			print(i, impl.args)
-			# raise AssertionError
+	argnames = inspect.signature(blk.func).parameters.items()
+#	print("ARGS", blk.args)
+#	for i in argnames:
+#		n, p = i
+#		print("ARGN %s: %s " % (n, p))
+#	z = input("--- HIT RETURN")
 
 	instance.symdict = parent_wires # XXX
 	m.collectWires(instance, argnames)
@@ -1027,9 +1009,9 @@ def infer_rtl(h, instance, design, module_signals):
 	print(BLUEBG + "\tInfer blackbox: '%s'" % instance.name + OFF)
 	m = infer_handle_interface(design, instance, module_signals)
 	intf = BBInterface("bb_" + instance.name, m)
-	instance.obj.infer(m, intf)
-	# Connect wires
 	impl = instance.obj
+	impl.infer(m, intf)
+	# Connect wires
 	# print(impl.func.__name__)
 
 	# Connect/wire up all interface connections to blackbox:
@@ -1038,26 +1020,12 @@ def infer_rtl(h, instance, design, module_signals):
 	# infer_obj.dump()
 	m.finish(design) # Hack
 
-def wireup(m, c, inst):
-	for n, i in inst.wiring.items():
-		print("WIRE", n, i[0], i[1])
-		a = i[1]
-		sig = m.findWireByName(n)
-		if not sig:
-			raise ValueError("%s not found" % i[0])
-		if a._driven:
-			print("ACTIVE wire %s -> %s" % (a._name, n))
-			# port.get().port_output = True
-			# s = Signal(port)
-			c.setPort(n, sig)
-			# m.connect(sig, s)
-		elif a._read:
-			port = m.addWire(None, len(a))
-			print("PASSIVE wire %s <- %s" % (a._name, n))
-			port.get().port_input = True
-			s = Signal(port)
-			c.setPort(n, s)
-			m.connect(s, sig)
+	# If we're marked 'builtin', then create a module blackbox stub
+	# that is resolved later:
+	if instance.obj.is_builtin:
+		m = design.addModule(impl.func.__name__, instance, True)
+		impl.blackbox(m, intf) # Create black box
+		m.finish(design)
 
 def convert_rtl(h, instance, design, module_signals):
 	m = infer_handle_interface(design, instance, module_signals)
@@ -1095,22 +1063,22 @@ def convert_rtl(h, instance, design, module_signals):
 		# print(impl.argnames)
 
 		inst_decl = h.instdict[name]
-#		wireup(m, c, inst_decl)
 
 		# Grab implementation function argument names
-		argnames = inspect.signature(impl.func).parameters.keys()
+		p = inspect.signature(impl.func).parameters
+		argnames = p.keys()
+
+		kwargdicts = []
 
 		for i, n in enumerate(argnames):
 			try:
 				a = impl.args[i]
+				convert_wires(m, c, a, n)
 			except IndexError:
-				print(argnames)
-				print(i, impl.args)
-				raise AssertionError
+				kwargdicts.append(p[n])
 
 			# z = input("--- HIT RETURN")
 
-			convert_wires(m, c, a, n)
 	m.finish(design) # Hack
 	print("DONE instancing submodules")
 
