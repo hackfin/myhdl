@@ -9,6 +9,34 @@ from myhdl import *
 from myhdl.conversion import yshelper
 from synthesis.yosys.autowrap import autowrap
 
+
+@autowrap
+def OSCG(OSC, **parameter):
+	"On-Chip oscillator"
+	C_OSCP = 1.613
+	oscb = Signal(bool(0))
+
+	try:
+		DIV = parameter['DIV']
+	except KeyError:
+		print("BAD divider, using default 128")
+		DIV = 128
+
+	halfp = C_OSCP * DIV
+
+	@instance
+	def sim():
+		while 1:
+			yield delay(halfp)
+			oscb.next = not oscb
+
+	@always_comb
+	def assign():
+		OSC.next = oscb
+	
+	return sim, assign
+
+
 @autowrap
 def EHXPLLL(CLKI, CLKFB, PHASESEL1, PHASESEL0, PHASEDIR, PHASESTEP, \
 	PHASELOADREG, STDBY, \
