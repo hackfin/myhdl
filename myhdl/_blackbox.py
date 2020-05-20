@@ -55,9 +55,13 @@ class SynthesisObject:
 		self.func = func
 		self.name = func.__name__
 
-	def infer(self, module, inst):
+	def infer(self, module, interface):
 		_debug("Inferring %s for module '%s'" % (self.name, module.name.str()))
-		self.func(module, inst)
+		self.func(module, interface)
+
+	def blackbox(self, module, interface):
+		_debug("Default: External black box '%s' for module %s" % (self.name, module.name.str()))
+		
 
 class SynthesisFactory:
 	def __init__(self, func):
@@ -81,11 +85,12 @@ class _BlackBox(_Block):
 		self.callinfo = callinfo
 		self.modctxt = callinfo.modctxt
 		self.name = self.__name__ = name
-		self.subs = _flatten(func(*args, **kwargs))
 		self.symdict = None
 		self.sigdict = {}
 		self.memdict = {}
 		self.name = self.__name__ = name
+		# True when we are a module from the library
+		self.is_builtin = False
 
 		# flatten, but keep BlockInstance objects
 		self.subs = _flatten(func(*args, **kwargs))
@@ -104,9 +109,16 @@ class _BlackBox(_Block):
 					raise BlockError("ERR %s %s" % (self.name, inst.callername))
 
 	def infer(self, module, interface):
+		"Calls inference members of blackbox object"
 		for inst in self.subs:
 			if isinstance(inst, SynthesisObject):
 				inst.infer(module, interface)
+
+	def blackbox(self, module, interface):
+		"Calls all blackbox creator functions of Blackbox"
+		for inst in self.subs:
+			if isinstance(inst, SynthesisObject):
+				inst.blackbox(module, interface)
 
 	def dump(self):
 		_debug(self.kwargs)

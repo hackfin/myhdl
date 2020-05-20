@@ -65,6 +65,8 @@ def dpram_r1w1(a, b, HEXFILE = None, USE_CE = False):
 
 		user = 0
 		name = interface.name
+
+		memid = "\\" + name
 		
 		# Create only once:
 		if name in module.memories:
@@ -91,7 +93,7 @@ def dpram_r1w1(a, b, HEXFILE = None, USE_CE = False):
 		w.setParam("ABITS", ABITS)
 		w.setParam("WIDTH", DBITS)
 		w.setParam("TRANSPARENT", 0)
-		w.setParam("MEMID", interface.name)
+		w.setParam("MEMID", memid)
 		w.setParam("CLK_POLARITY", 1)
 		w.setParam("CLK_ENABLE", 1) # We're synchronous
 
@@ -123,7 +125,7 @@ def dpram_r1w1(a, b, HEXFILE = None, USE_CE = False):
 		r.setParam("WIDTH", DBITS)
 		r.setParam("TRANSPARENT", 0)
 
-		r.setParam("MEMID", interface.name)
+		r.setParam("MEMID", memid)
 		r.setParam("CLK_POLARITY", 1)
 		r.setParam("CLK_ENABLE", 1) # We're synchronous
 	

@@ -145,6 +145,8 @@ def run_conversion(ent, async_reset = False, wrapper = None, display = False, **
 
 	name = ent.func.__name__
 	design.write_verilog(name, True)
+	if "test_syn" in kwargs and kwargs["test_syn"] == True:
+		design.test_synth()
 	return design
 
 def run_tb(tb, cycles = 200000):

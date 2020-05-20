@@ -2,13 +2,18 @@
 #
 # (c) 2020, <hackfin@section5.ch>
 #
+#
+#  All library blackboxes should go into $MYHDL_REPO/synthesis/yosys
+#
+#  All Blackboxes that myhdl-yosys requires for implicit inferring are
+#  in here.
 
 from myhdl import *
 
 # Do not import any yshelper stuff in here.
 # Use the interface class (`interface` parameter in implementation()
 
-class yosys:
+class myhdl_builtin:
 	def __init__(self):
 		pass
 
@@ -19,7 +24,7 @@ def Rom(addr, data, INIT_DATA):
 	def simulation():
 		data.next = INIT_DATA[addr]
 
-	@synthesis(yosys)
+	@synthesis(myhdl_builtin)
 	def implementation(module, interface):
 		in_addr = interface.addWire(addr)
 		out_data = interface.addWire(data, True)
@@ -28,6 +33,8 @@ def Rom(addr, data, INIT_DATA):
 		abits = in_addr.size()
 
 		user = 0
+
+		memid = "\\" + interface.name
 		
 		# Create only once:
 		if interface.name in module.memories:
@@ -42,7 +49,7 @@ def Rom(addr, data, INIT_DATA):
 			init.setParam("ABITS", 32)
 			init.setParam("PRIORITY", 48)
 			init.setParam("WORDS", len(INIT_DATA))
-			init.setParam("MEMID", interface.name)
+			init.setParam("MEMID", memid)
 			init.setParam("WIDTH", dbits)
 			init.setPort("ADDR", 0)
 
@@ -63,7 +70,7 @@ def Rom(addr, data, INIT_DATA):
 		readport.setParam("WIDTH", dbits)
 		readport.setParam("TRANSPARENT", 0)
 
-		readport.setParam("MEMID", interface.name)
+		readport.setParam("MEMID", memid)
 		readport.setParam("CLK_POLARITY", 0)
 		readport.setParam("CLK_ENABLE", 0) # We're totally async
 

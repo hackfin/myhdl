@@ -169,6 +169,29 @@ def process_variables(clk, ce, reset, dout, debug):
 	return instances()
 
 @block
+def simple_variable(clk, ce, reset, dout, debug):
+	"Simple variable example"
+	counter = Signal(modbv(0)[8:])
+	cr = ResetSignal(0, 1, isasync = False)
+	ctr = up_counter(clk, 1, cr, counter)
+
+	@always_seq(clk.posedge, reset)
+	def fsm():		  
+		v = intbv(0xff)[8:] # default value
+
+		if ce:
+			v = intbv(0xaa)[8:]
+	
+		dout.next = v
+	@always_comb
+	def assign():
+		debug.next = 0
+		cr.next = reset
+
+	return instances()
+
+
+@block
 def module_variables(clk, ce, reset, dout, debug):
 	"Module wide variables"
 	counter = Signal(modbv(0)[8:])
@@ -474,8 +497,8 @@ def dynamic_slice(clk, ce, reset, dout, debug):
 # Tests
 
 
-UUT_LIST = [ simple_expr, bool_ops, simple_reset_expr, proc_expr, process_variables, module_variables,
-	simple_arith, simple_cases, simple_resize_cases, lfsr8_1, counter_extended]
+UUT_LIST = [ simple_expr, bool_ops, simple_reset_expr, proc_expr, process_variables, simple_variable,
+	module_variables, simple_arith, simple_cases, simple_resize_cases, lfsr8_1, counter_extended]
 
 UUT_LIST += [ simple_sr, simple_shift_right ]
 

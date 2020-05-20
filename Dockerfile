@@ -6,7 +6,12 @@ RUN sudo pip3 install --no-cache graphviz pydotplus notebook nbwavedrom
 # Check out specific build recipe:
 # RUN wget https://raw.githubusercontent.com/hackfin/myhdl/jupyosys/scripts/recipes/myhdl.mk -O /home/pyosys/scripts/recipes/myhdl_yosys.mk
 
+
 COPY . /home/pyosys/src/myhdl/myhdl-yosys/
+
+RUN jupyter nbextension install \
+	/home/pyosys/src/myhdl/myhdl-yosys/example/ipynb/js/ml.js --user && \
+	jupyter nbextension enable ml
 
 RUN sudo chown -R pyosys /home/pyosys
 
