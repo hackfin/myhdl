@@ -224,6 +224,10 @@ class Wire:
 	def get(self):
 		return self.wire
 
+	def setDirection(self, IN = False, OUT = False):
+		self.wire.port_input = IN
+		self.wire.port_output = OUT
+
 	def __getattr__(self, name):
 		return getattr(self.wire, name)
 
@@ -596,6 +600,21 @@ class Module:
 			elem = None
 
 		return elem
+	
+	def signal_output_type(self, sig):
+		src = sig._source
+		is_out = False
+		if src:
+			# If it's us driving the pin, we're an OUT,
+			# unless we're a shadow.
+			if src == self.implementation:
+				if isinstance(sig, _ShadowSignal):
+					print("Warning: ShadowSignal %s never an output" % sig._name)
+				else:
+					is_out = sig._driven
+			src = src.name
+
+		return is_out, src
 
 	def collectArg(self, name, arg, force_wire = False):
 		d = self.wires
@@ -603,14 +622,8 @@ class Module:
 			s = len(arg)
 			w = self.addWire(name, s, True)
 			pname = arg._origname
-			src = arg._source
-			is_out = False
 			sig = Signal(w)
-			if src:
-				# If it's us driving the pin, we're an OUT:
-				if src == self.implementation:
-					is_out = arg._driven
-				src = src.name
+			is_out, src = self.signal_output_type(arg)
 			# TODO: Clock signal could be flagged for debugging purposes
 			# Currently, it tends to be regarded as 'floating'
 			if is_out:
@@ -749,6 +762,8 @@ class Module:
 		for n, s in sigs.items():
 			for sl in s._slicesigs:
 				w = self.findWireByName(s._name)
+				if not w:
+					raise KeyError("Signal %s not found" % s._name)
 				if sl._right:
 					sls = w.extract(sl._right, sl._left - sl._right)
 				else:

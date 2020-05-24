@@ -9,17 +9,38 @@ from myhdl import *
 from myhdl.conversion import yshelper
 from synthesis.yosys.autowrap import autowrap
 
+from myhdl._Signal import _Signal
+
+# from dsp import *
+
+@autowrap
+def CLKDIVF(CLKI, RST, ALIGNWD, CDIVX, **parameter):
+	"Edge clock divider, see Lattice TN1263"
+	CLKI.read = True
+	if isinstance(RST, _Signal):
+		RST.read = True
+	if isinstance(ALIGNWD, _Signal):
+		ALIGNWD.read = True
+
+	@always_comb
+	def assign():
+		CDIVX.next = CLKI
+		raise SystemError("Simulation model missing")
+
+	return assign
 
 @autowrap
 def OSCG(OSC, **parameter):
 	"On-Chip oscillator"
-	C_OSCP = 1.613
+	
+	# half period in pico seconds
+	C_OSCP = 1613
 	oscb = Signal(bool(0))
 
 	try:
 		DIV = parameter['DIV']
 	except KeyError:
-		print("BAD divider, using default 128")
+		print("No 'DIV' parameter given for divider, using default 128")
 		DIV = 128
 
 	halfp = C_OSCP * DIV

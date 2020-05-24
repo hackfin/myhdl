@@ -1108,7 +1108,7 @@ def convert_hierarchy(h, func, design, trace = False):
 				l.append(elem)
 
 		for m in inst.memdict.items():
-			print(GREEN + "Memory: %s" % m[0] + OFF)
+			print(GREEN + "Memory/Signal list: %s" % m[0] + OFF)
 
 		inst.instances = block_instances
 
