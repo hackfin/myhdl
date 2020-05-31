@@ -942,48 +942,6 @@ def collect_generators(instance, absnames):
  
 	return genlist
 
-
-def convert_wires(m, c, a, n):
-	if isinstance(a, _Signal):
-		try:
-			sig = m.findWire(a)
-			if not sig:
-				raise KeyError("Wire %s not found in signal list" % a._name)
-			if a.driven:
-				# print("ACTIVE wire %s -> %s" % (a._name, n))
-				# port.get().port_output = True
-				# s = Signal(port)
-				c.setPort(n, sig)
-				# m.connect(sig, s)
-			elif a.read:
-				# print("PASSIVE wire %s <- %s" % (a._name, n))
-				c.setPort(n, sig)
-			else:
-				print("FLOATING wire", a._name)
-		except KeyError:
-			print("UNDEFINED/UNUSED wire, localname: %s, origin: %s" % (a._name, a._origname))
-
-	elif isinstance(a, intbv):
-		l = len(a)
-		# print("CONST (vector len %d) wire" % l)
-		port = m.addWire(None, l)
-		s = Signal(port)
-		sig = ConstSignal(a, l)
-		c.setPort(n, s)
-		if (s.size() < sig.size()) or sig.size() == 0:
-			raise AssertionError("Bad signal size")
-		m.connect(s, sig)
-	elif isinstance(a, int) or isinstance(a, bool):
-		print("WARNING: Parameter '%s' handled as constant signal" % n)
-	elif a == None:
-		pass
-	elif hasattr(a, '__dict__'):
-		print("Resolve class (bus wire)")
-		for i in a.__dict__.items():
-			convert_wires(m, c, i[1], n + "_" + i[0])
-	else:
-		raise TypeError("Unsupported wire type for %s: %s" % (n, type(a).__name__))
-
 		
 def infer_handle_interface(design, instance, parent_wires):
 	blk = instance.obj
