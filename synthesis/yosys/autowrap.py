@@ -14,7 +14,7 @@ define input/outputs:
 def BB(SIG1_IN, SIG2_OUT, ..., **parameters):
 	
 	SIG1_IN.read = True  # Mark this explicitely as input, if not
-	                     # read below in the emulation
+						 # read below in the emulation
 
 	@always_comb
 	def emulation():
@@ -30,29 +30,191 @@ import inspect
 
 from myhdl import *
 from myhdl._blackbox import blackbox, _BlackBox, SynthesisObject
-from myhdl.conversion import yshelper
+from myhdl.conversion import yshelper as ys
+
+from myhdl._Signal import _Signal
+
+def map_interface(module, name, mapping, sig, otype = None):
+	"""Map signal to module interface."""
+	if otype == None:
+		otype, _ = module.signal_output_type(sig)
+
+	l = len(mapping)
+
+	if l > 1:
+		for j, _ in enumerate(mapping):
+			identifier = "%s%d" % (name, j)
+			# Make sure to add a 'public' wire:
+			w = module.addWire(identifier, 1, True)
+			if otype:
+				w.setDirection(IN=False, OUT=True)
+			else:
+				w.setDirection(IN=True, OUT=False)
+
+			module.wires[identifier] = ys.Signal(w)
+	else:
+		w = module.addWire(name, 1, True)
+		if otype:
+			w.setDirection(IN=False, OUT=True)
+		else:
+			w.setDirection(IN=True, OUT=False)
+		module.wires[name] = ys.Signal(w)
+
+def map_port(module, unit, mapping, identifier, sig, otype = None):
+	"""Maps a signal from the parenting `module` to the ports of a
+black box entity (a.ka. cell `unit`) using the given
+mapping."""
+	if otype == None:
+		otype, src = module.signal_output_type(sig)
+		if not src:
+			print("Notice: %s has no source" % identifier)
+	# If we're an input, simply extract signal
+	# from bulk signal
+	bulk = module.findWireByName(identifier)
+	if not bulk:
+		raise KeyError("Bulk wire '%s' not found" % n)
+
+	l = len(mapping)
+	if l > 1:
+		if otype:
+			cc = module.addSignal(None, 0)
+			for j, me in enumerate(mapping):
+				pid, sz = me
+				w = ys.Signal(module.addWire(pid, 1))
+				unit.setPort(pid, w)
+				cc.append(w)
+			module.connect(bulk, cc)
+		else:
+			for j, me in enumerate(mapping):
+				pid, sz = me
+				w = bulk.extract(j, 1)
+				unit.setPort(pid, w)
+	else:
+		unit.setPort(identifier, bulk)
+
+def translate_vector(name, sig):
+	l = len(sig)
+	r = range(l)
+	mapping = [ ("%s%d" % (name, i), 1) for i in r]
+	return mapping
+
+class BulkSignal:
+	"""Preliminary bulk signal type
+Inside the blackbox environment, this is a non-nestable container
+for unidirectional signals. The direction is defined by the static _otype
+attribute in the class definition."""
+	def __init__(self, name = ""):
+		self._name = name
+
+	def members(self):
+		return [ (i, getattr(self, i)) for i in self.__slots__ ]
+
+	def collect(self, module):
+		if self._otype:
+			otype = self._otype
+			impl = module.implementation
+		else:
+			otype = None
+			impl = None
+		for i in self.__slots__:
+			n = self._name + "_" + i
+			s = getattr(self, i)
+			# Set origin and driver explicitely
+			s._driven = otype
+			s._source = impl
+			module.collectArg(n, s)
+
+	def map_ports(self, module, unit):
+		"Map ports to unit"
+		for n in self.__slots__:
+			name = "%s_%s" % (self._name, n)
+			s = getattr(self, n)
+			if isinstance(s, _Signal):
+				map_port(module, unit, translate_vector(name, s), name, s, self._otype)
+			elif isinstance(s, BulkSignal):
+				raise TypeError("Nested bulk class signals not allowed")
+			else:
+				raise TypeError("Unsupported type %s", type(s))
+
+	def interface(self, module):
+		"Create the interface in the passed module"
+
+		for n in self.__slots__:
+			name = "%s_%s" % (self._name, n)
+			s = getattr(self, n)
+			if isinstance(s, _Signal):
+				map_interface(module, name, translate_vector(name, s), s, self._otype)
+			else:
+				raise TypeError("Unsupported type %s", type(s))
+
+	def convert_wires(self, m, c):
+		for n, i in self.members():
+			name = "%s_%s" % (self._name, n)
+			# We explicitely assign that name and driver:
+			i._name = name
+			if self._otype:
+				i._source = m.implementation
+				i.driven = "wire"
+			else:
+				i.read = True
+			ys.convert_wires(m, c, i, name, True)
 
 class AutoSynthesisObject(SynthesisObject):
-	def __init__(self, identifier, typename, args, kwargs, argnames):
+	def __init__(self, identifier, typename, args, kwargs, argnames, \
+		mapping = None):
 		self.args = args
 		self.kwargs = kwargs
 		self.argnames = argnames
 		self.name = identifier
 		self.typename = typename
+		self.mapping = mapping
 
 	def infer(self, module, interface):
+		"""The inference method defines how the connections outside
+the blackbox are made. For identical signal mapping (self.mapping == None),
+it sets the ports of the unit according to the interface signal types."""
+
 		unit = module.addCell(self.name, self.typename, True)
 		args = self.args
 
-		for i, a in enumerate(self.argnames):
-			n, p = a
-			if p.kind == p.POSITIONAL_OR_KEYWORD:
-				sig = args[i]
-				w = module.findWireByName(n)
-				unit.setPort(n, w)
+		if self.mapping:
+			print("Custom mapping black box %s" % self.name)
+			for i, a in enumerate(self.argnames):
+				n, p = a
+				if p.kind == p.POSITIONAL_OR_KEYWORD:
+					sig = args[i]
+					if isinstance(sig, _Signal):
+						m = self.mapping[n]
+						map_port(module, unit, m, n, sig)
+					elif isinstance(sig, BulkSignal):
+						sig.map_ports(module, unit)
+					elif isinstance(sig, (int, bool)):
+						w = ys.ConstSignal(sig)
+						unit.setPort(n, w)
+					else:
+						raise TypeError("Unsupported arg type %s" % type(sig))
+
+		else:
+			for i, a in enumerate(self.argnames):
+				n, p = a
+				if p.kind == p.POSITIONAL_OR_KEYWORD:
+					sig = args[i]
+					if isinstance(sig, _Signal):
+						w = module.findWireByName(n)
+						if not w:
+							raise KeyError("Wire '%s' not found" % n)
+						unit.setPort(n, w)
+					elif isinstance(sig, BulkSignal):
+						sig.map_ports(module, unit)
+					elif isinstance(sig, (int, bool)):
+						w = ys.ConstSignal(sig)
+						unit.setPort(n, w)
+					else:
+						raise TypeError("Unsupported arg type %s" % type(sig))
 				
 		for pid, param in self.kwargs.items():
-			unit.setParam(pid, param)
+			if param != None:
+				unit.setParam(pid, param)
 
 		module.fixup_ports() # Important
 
@@ -61,14 +223,29 @@ class AutoSynthesisObject(SynthesisObject):
 		args = self.args
 		module.defaults = {}
 		module.makeblackbox()
-		for i, a in enumerate(self.argnames):
-			n, p = a
-			if p.kind == p.POSITIONAL_OR_KEYWORD:
-				sig = args[i]
-				module.collectArg(n, sig, True)
+
+		if self.mapping:
+			for i, a in enumerate(self.argnames):
+				n, p = a
+				if p.kind == p.POSITIONAL_OR_KEYWORD:
+					sig = args[i]
+
+					if isinstance(sig, _Signal):
+						map_interface(module, n, self.mapping, sig)
+					elif isinstance(sig, BulkSignal):
+						sig.interface(module)
+					else:
+						raise TypeError("Unsupported argument type %s" % (type(sig)))
+
+		else:
+			for i, a in enumerate(self.argnames):
+				n, p = a
+				if p.kind == p.POSITIONAL_OR_KEYWORD:
+					sig = args[i]
+					module.collectArg(n, sig, True)
 
 		l = self.kwargs.keys()
-		module.avail_parameters = [ (yshelper.PID(i)) for i in l ]
+		module.avail_parameters = [ (ys.PID(i)) for i in l ]
 
 		module.fixup_ports() # Important
 
@@ -86,6 +263,7 @@ class autowrap(blackbox):
 #				print("KEYWORD", n)
 
 		blackbox.__init__(self, func)
+		self.unroll = None
 
 	def __call__(self, *args, **kwargs):
 		name = self.func.__name__ + "_" + str(self.calls)
@@ -97,11 +275,63 @@ class autowrap(blackbox):
 					  self.srcline, *args, **kwargs)
 
 		b.is_builtin = True
+
+		if self.unroll:
+			mapping = self.unroll(args, self.argnames)
+		else:
+			mapping = None
 	
 		gen = AutoSynthesisObject(name, self.func.__name__, \
-			args, kwargs, self.argnames)
+			args, kwargs, self.argnames, mapping)
 		b.subs.append(gen)
 
 		return b
 
+class WrapperFactory:
+	def __init__(self, translate):
+		self.translate = translate
 
+	def __call__(self, *args, **kwargs):
+		func = args[0]
+		wrapper = autowrap(func)
+		wrapper.unroll = self.translate
+
+		return wrapper
+
+def autowrap_unroll(func):
+	wrapper = WrapperFactory(func)
+	return wrapper
+
+def insert_sig(d, prefix, sig):
+	def translate(name, sig):
+		l = len(sig)
+		r = range(l)
+		mapping = [ ("%s%d" % (name, i), 1) for i in r]
+		return mapping
+
+	if isinstance(sig, BulkSignal):
+		for subsig in sig.members():
+			insert_sig(d, sig._name + "_" + subsig[0], subsig[1])
+	elif isinstance(sig, _Signal):
+		name = prefix
+		if sig._type == intbv:
+			ns = translate(name, sig)
+			d[name] = ns
+		elif sig._type == bool:
+			d[name] = [(name, 1)]
+	elif isinstance(sig, bool):
+		d[name] = [(name, 1)]
+	else:
+		raise ValueError("Unsupported type", type(sig))	
+
+def unroll_bulk(args, argnames):
+	"""Bulk class unroller. Unrolls all bit vectors of name V into a map
+	of V0, V1, .. into boolean signals each"""
+
+	mapping = {}
+	for i, n in enumerate(argnames):
+		sig = args[i]
+		name = n[0]
+		insert_sig(mapping, name, sig)
+
+	return mapping
