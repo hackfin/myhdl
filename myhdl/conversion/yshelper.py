@@ -36,7 +36,6 @@ OFF = "\033[0m"
 # Visitor states:
 S_NEUTRAL, S_COLLECT, S_MUX , S_TIE_DEFAULTS = range(4)
 
-
 class DebugOutput:
 	debug = False
 	def dbg(self, node, kind, msg = "DBG", details = "MARK"):
@@ -124,7 +123,6 @@ def SigBit(x):
 	else:
 		return ys.SigBit(x)
 
-
 class Design:
 	"Simple design wrapper"
 	def __init__(self, name="top"):
@@ -135,7 +133,8 @@ class Design:
 		return self.design
 
 	def addModule(self, name, implementation, builtin = False):
-		print(GREEN + "Adding module with name:" + OFF, name)
+		b = "blackbox-" if builtin else ""
+		print(GREEN + "Adding %smodule with name:"  % b + OFF, name)
 		if builtin:
 			n = PID(name)
 		else:
@@ -223,6 +222,10 @@ class Wire:
 
 	def get(self):
 		return self.wire
+
+	def setDirection(self, IN = False, OUT = False):
+		self.wire.port_input = IN
+		self.wire.port_output = OUT
 
 	def __getattr__(self, name):
 		return getattr(self.wire, name)
@@ -596,6 +599,21 @@ class Module:
 			elem = None
 
 		return elem
+	
+	def signal_output_type(self, sig):
+		src = sig._source
+		is_out = False
+		if src:
+			# If it's us driving the pin, we're an OUT,
+			# unless we're a shadow.
+			if src == self.implementation:
+				if isinstance(sig, _ShadowSignal):
+					print("Notice: ShadowSignal %s never an output" % sig._name)
+				else:
+					is_out = sig._driven
+			src = src.name
+
+		return is_out, src
 
 	def collectArg(self, name, arg, force_wire = False):
 		d = self.wires
@@ -603,19 +621,13 @@ class Module:
 			s = len(arg)
 			w = self.addWire(name, s, True)
 			pname = arg._origname
-			src = arg._source
-			is_out = False
 			sig = Signal(w)
-			if src:
-				# If it's us driving the pin, we're an OUT:
-				if src == self.implementation:
-					is_out = arg._driven
-				src = src.name
+			is_out, src = self.signal_output_type(arg)
 			# TODO: Clock signal could be flagged for debugging purposes
 			# Currently, it tends to be regarded as 'floating'
 			if is_out:
 				#print("\tWire OUT (%s) %s, parent: %s, driver: %s" % (arg._driven, name, pname, src))
-				w.get().port_output = True
+				w.setDirection(IN=False, OUT=True)
 				# If we need to create a register, replace this wire
 				if arg._driven == "reg":	
 					buf = sig
@@ -624,14 +636,14 @@ class Module:
 					self.connect(buf, sig)
 
 			elif arg._read:
-				#print("\tWire IN %s, parent %s, origin: %s" % (name, pname, src))
-				w.get().port_input = True
+				# print("\tWire IN %s, parent %s, origin: %s" % (name, pname, src))
+				w.setDirection(IN=True, OUT=False)
 			else:
 				print("\tWire FLOATING %s, parent %s" % (name, pname))
 				# FIXME
 				# For now, we allocate this port as a dummy, anyway
 				# Also note: clk ports are not properly marked as 'read'
-				w.get().port_input = True
+				w.setDirection(IN=True, OUT=False)
 
 			# FIXME: Works only for const values. When using a parametrized value,
 			# we need to make sure the cell gets the corresponding parameter
@@ -665,6 +677,9 @@ class Module:
 			pass
 		elif isinstance(arg, tuple):
 			pass
+		elif hasattr(arg, "__slots__"):
+			# Assume BulkSignal compatible class
+			arg.collect(self)
 		else:
 			# print("Bus/Port class %s" % name)
 			try:
@@ -735,7 +750,6 @@ class Module:
 			if not n in ps:
 				insert_wire("PARENT", ps, n, s)
 				initvalues[n] = s._init
-
 	
 		# Collect remaining symbols, typically locally defined ones:
 		shadow_syms = []
@@ -750,6 +764,8 @@ class Module:
 		for n, s in sigs.items():
 			for sl in s._slicesigs:
 				w = self.findWireByName(s._name)
+				if not w:
+					raise KeyError("Signal %s not found" % s._name)
 				if sl._right:
 					sls = w.extract(sl._right, sl._left - sl._right)
 				else:
@@ -1805,3 +1821,43 @@ class BBInterface:
 				else:
 					m.connect(sig, s)
 		
+def convert_wires(m, c, a, n, force = False):
+	if isinstance(a, _Signal):
+		try:
+			sig = m.findWire(a)
+			if not sig:
+				raise KeyError("Wire %s not found in signal list" % a._name)
+			if a.driven or a.read or force:
+				c.setPort(n, sig)
+			else:
+				print("FLOATING wire", a._name)
+		except KeyError:
+			print(REDBG + \
+				"UNDEFINED/UNUSED wire, localname: %s, origin: %s" % (a._name, a._origname) + OFF)
+
+	elif isinstance(a, intbv):
+		l = len(a)
+		# print("CONST (vector len %d) wire" % l)
+		port = m.addWire(None, l)
+		s = Signal(port)
+		sig = ConstSignal(a, l)
+		c.setPort(n, s)
+		if (s.size() < sig.size()) or sig.size() == 0:
+			raise AssertionError("Bad signal size")
+		m.connect(s, sig)
+	elif isinstance(a, int) or isinstance(a, bool):
+		print("WARNING: Parameter '%s' handled as constant signal" % n)
+	elif a == None:
+		pass
+	elif inspect.isclass(type(a)):
+		if hasattr(a, "convert_wires"):
+			a.convert_wires(m, c)
+		else:
+			# Legacy support:
+			print("Resolve legacy class (bus wire)")
+			for i in a.__dict__.items():
+				convert_wires(m, c, i[1], n + "_" + i[0])
+	else:
+		raise TypeError("Unsupported wire type for %s: %s" % (n, type(a).__name__))
+
+
