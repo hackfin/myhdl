@@ -110,6 +110,7 @@ class _BlackBox(_Block):
 
 	def infer(self, module, interface):
 		"Calls inference members of blackbox object"
+		interface.sigdict = self.sigdict
 		for inst in self.subs:
 			if isinstance(inst, SynthesisObject):
 				inst.infer(module, interface)

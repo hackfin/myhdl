@@ -8,6 +8,7 @@ import pytest
 
 @block
 def up_counter(clk, ce, reset, counter):
+	"Counter with implicit register inference"
 
 	@always_seq(clk.posedge, reset)
 	def worker():
@@ -15,6 +16,23 @@ def up_counter(clk, ce, reset, counter):
 			counter.next = counter + 1
 
 	return instances()
+
+@block
+def up_counter_reg(clk, ce, reset, counter):
+	"Counter with explicit register instance"
+	c = Signal(intbv(0)[len(counter):0])
+
+	@always_seq(clk.posedge, reset)
+	def worker():
+		if ce:
+			c.next = c + 1
+
+	@always_comb
+	def assign():
+		counter.next = c
+
+	return instances()
+
 
 @block
 def simple_expr(clk, ce, reset, dout, debug):
@@ -502,9 +520,9 @@ UUT_LIST = [ simple_expr, bool_ops, simple_reset_expr, proc_expr, process_variab
 
 UUT_LIST += [ simple_sr, simple_shift_right ]
 
-UUT_LIST += [ unused_pin ]
+UUT_LIST += [ unused_pin, fail_elif ]
 
-UUT_UNRESOLVED_LIST = [ dynamic_slice, if_expr, assign_slice_legacy, assign_slice_new, fail_elif ]
+UUT_UNRESOLVED_LIST = [ dynamic_slice, if_expr, assign_slice_legacy, assign_slice_new ]
 
 @pytest.mark.parametrize("uut", UUT_LIST)
 def test_mapped_uut(uut):

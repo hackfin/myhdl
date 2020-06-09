@@ -44,7 +44,7 @@ from myhdl.conversion._misc import (_error, _access, _kind,
                                     _get_argnames)
 from myhdl._extractHierarchy import _isMem, _getMemInfo, _UserCode
 from myhdl._Signal import _Signal, _WaiterList
-from myhdl._ShadowSignal import _ShadowSignal, _SliceSignal, _TristateDriver
+from myhdl._ShadowSignal import _ShadowSignal, _TristateDriver
 from myhdl._util import _flatten
 from myhdl._util import _isTupleOfInts
 from myhdl._util import _makeAST
@@ -62,7 +62,6 @@ def _makeName(n, prefixes, namedict):
     # trim empty prefixes
     prefixes = [p for p in prefixes if p]
     if len(prefixes) > 1:
-        #        name = '_' + '_'.join(prefixes[1:]) + '_' + n
         name = '_'.join(prefixes[1:]) + '_' + n
     else:
         name = n
@@ -71,72 +70,6 @@ def _makeName(n, prefixes, namedict):
 # print prefixes
 # print name
     return name
-
-
-def _analyzeSigs(hierarchy, hdl='Verilog'):
-    curlevel = 0
-    siglist = []
-    memlist = []
-    prefixes = []
-
-    open, close = '[', ']'
-    if hdl == 'VHDL':
-        open, close = '(', ')'
-
-    for inst in hierarchy:
-        level = inst.level
-        name = inst.name
-        sigdict = inst.sigdict
-        memdict = inst.memdict
-        namedict = dict(chain(sigdict.items(), memdict.items()))
-        delta = curlevel - level
-        curlevel = level
-        assert(delta >= -1)
-        if delta > -1:  # same or higher level
-            prefixes = prefixes[:curlevel - 1]
-        # skip processing and prefixing in context without signals
-        # if not (sigdict or memdict):
-        #    prefixes.append("")
-        #    continue
-        prefixes.append(name)
-        for n, s in sigdict.items():
-            if s._name is not None:
-                continue
-            if isinstance(s, _SliceSignal):
-                continue
-            s._name = _makeName(n, prefixes, namedict)
-            if not s._nrbits:
-                raise ConversionError(_error.UndefinedBitWidth, s._name)
-            # slice signals
-            for sl in s._slicesigs:
-                sl._setName(hdl)
-            siglist.append(s)
-        # list of signals
-        for n, m in memdict.items():
-            if m.name is not None:
-                continue
-            m.name = _makeName(n, prefixes, namedict)
-            memlist.append(m)
-
-    # handle the case where a named signal appears in a list also by giving
-    # priority to the list and marking the signals as unused
-    for m in memlist:
-        if not m._used:
-            continue
-        for i, s in enumerate(m.mem):
-            s._name = "%s%s%s%s" % (m.name, open, i, close)
-            s._used = False
-            if s._inList:
-                raise ConversionError(_error.SignalInMultipleLists, s._name)
-            s._inList = True
-            if not s._nrbits:
-                raise ConversionError(_error.UndefinedBitWidth, s._name)
-            if type(s.val) != type(m.elObj.val):
-                raise ConversionError(_error.InconsistentType, s._name)
-            if s._nrbits != m.elObj._nrbits:
-                raise ConversionError(_error.InconsistentBitWidth, s._name)
-
-    return siglist, memlist
 
 
 def _analyzeGens(inst, top, absnames):
@@ -1143,7 +1076,7 @@ class _AnalyzeAlwaysCombVisitor(_AnalyzeBlockVisitor):
                 s._driven = "wire"
             for n in self.tree.outmems:
                 m = _getMemInfo(self.tree.symdict[n])
-                m._source = self.tree.parent
+                # m._source = self.tree.parent
                 m._driven = "wire"
 
 
@@ -1255,69 +1188,6 @@ ismethod = inspect.ismethod
 
 def isboundmethod(m):
     return ismethod(m) and m.__self__ is not None
-
-
-# a local function to drill down to the last interface
-def expandinterface(v, name, obj):
-    for attr, attrobj in vars(obj).items():
-        if isinstance(attrobj, _Signal):
-            #                     signame = attrobj._name
-            #                     if not signame:
-            #                         signame = name + '_' + attr
-            #                         attrobj._name = signame
-            signame = name + '_' + attr
-#             signame = name + attr
-            attrobj._name = signame
-            # check if already in
-#                     if v.fullargdict.has_key(signame):
-#                         raise ConversionError(_error.NameCollision, signame)
-            v.argdict[signame] = attrobj
-            v.argnames.append(signame)
-        elif isinstance(attrobj, myhdl.EnumType):
-            pass
-        elif hasattr(attrobj, '__dict__'):
-                    # can assume is yet another interface ...
-            expandinterface(v, name + '_' + attr, attrobj)
-
-
-def _analyzeTopFunc(func, *args, **kwargs):
-    tree = _makeAST(func)
-    v = _AnalyzeTopFuncVisitor(func, tree, *args, **kwargs)
-    v.visit(tree)
-
-#     objs = []
-#     for name, obj in v.fullargdict.items():
-#         if not isinstance(obj, _Signal):
-#             objs.append((name, obj))
-#
-#     # create ports for any signal in the top instance if it was buried in an
-#     # object passed as in argument
-#     # TODO: This will not work for nested objects in the top level
-#     for name, obj in objs:
-#         if not hasattr(obj, '__dict__'):
-#             continue
-#         for attr, attrobj in vars(obj).items():
-#             if isinstance(attrobj, _Signal):
-#                 signame = attrobj._name
-#                 if not signame:
-#                     signame = name + '_' + attr
-#                     attrobj._name = signame
-#                 v.argdict[signame] = attrobj
-#                 v.argnames.append(signame)
-
-    # collect the interface objects if any
-    objs = []
-    for name, obj in v.fullargdict.items():
-        if not isinstance(obj, _Signal):
-            objs.append((name, obj))
-
-    # now expand the interface objects
-    for name, obj in objs:
-        if hasattr(obj, '__dict__'):
-            # must be an interface object (probably ...?)
-            expandinterface(v, name, obj)
-
-    return v
 
 
 class _AnalyzeTopFuncVisitor(_AnalyzeVisitor):

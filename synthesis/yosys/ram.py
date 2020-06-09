@@ -55,8 +55,8 @@ def dpram_r1w1(a, b, HEXFILE = None, USE_CE = False):
 
 	@synthesis(yshelper.yosys)
 	def implementation(module, interface):
-		in_addr = interface.addWire(b.addr)
-		out_data = interface.addWire(b.read, True)
+		in_addr = interface.addPort('b_addr')
+		out_data = interface.addPort('b_read', True)
 
 		print("Create yosys implementation of module")
 
@@ -82,9 +82,9 @@ def dpram_r1w1(a, b, HEXFILE = None, USE_CE = False):
 		# Write port init:
 			
 		w = module.addCell(name + "_write%d" % user, "memwr")
-		port_clk = interface.addWire(a.clk)
-		port_write = interface.addWire(a.write)
-		port_addr = interface.addWire(a.addr)
+		port_clk = interface.addPort('a_clk')
+		port_write = interface.addPort('a_write')
+		port_addr = interface.addPort('a_addr')
 		w.setPort("CLK", port_clk)
 		w.setPort("DATA", port_write)
 		w.setPort("ADDR", port_addr)
@@ -99,12 +99,12 @@ def dpram_r1w1(a, b, HEXFILE = None, USE_CE = False):
 
 		if USE_CE:
 			port_en = module.addSignal(None, 1)
-			in_en = interface.addWire(a.ce)
-			in_we = interface.addWire(a.we)
+			in_en = interface.addPort('a_ce')
+			in_we = interface.addPort('a_we')
 			and_inst = module.addAnd(yshelper.ID(name + "_ce"), \
 				in_en, in_we, port_en)
 		else:
-			port_en = interface.addWire(a.we)
+			port_en = interface.addPort('a_we')
 
 		enable_array = module.addSignal(None, 0)
 		for i in range(DBITS):
@@ -113,9 +113,9 @@ def dpram_r1w1(a, b, HEXFILE = None, USE_CE = False):
 		w.setPort("EN", enable_array)
 
 		# Read port initialization:
-		port_clk = interface.addWire(b.clk)
-		port_read = interface.addWire(b.read, True) # output
-		port_addr = interface.addWire(b.addr)
+		port_clk = interface.addPort('b_clk')
+		port_read = interface.addPort('b_read', True) # output
+		port_addr = interface.addPort('b_addr')
 
 		r = module.addCell(name + "_read%d" % user, "memrd")
 		r.setPort("ADDR", port_addr)
@@ -130,14 +130,14 @@ def dpram_r1w1(a, b, HEXFILE = None, USE_CE = False):
 		r.setParam("CLK_ENABLE", 1) # We're synchronous
 	
 		if USE_CE:
-			port_en = interface.addWire(b.ce)
+			port_en = interface.addPort('b_ce')
 		else:
 			port_en = yshelper.ConstSignal(True)
 
 		r.setPort("EN", port_en)
 
 		# For Co-Simulation, we must set unused ports:
-		# port_a_read_dummy = interface.addWire(a.read, True) # output
+		# port_a_read_dummy = interface.addPort('a_read', True) # output
 		# s = yshelper.ConstSignal(0, DBITS)
 		# module.connect(port_a_read_dummy, s)
 

@@ -48,6 +48,8 @@ def lfsr8_multi(clk, ce, reset, dout, debug):
 
 	return instances()
 
+
+
 class Bus:
 	def __init__(self, AWIDTH = 8, DWIDTH = 8):
 		self.en = Signal(bool())
@@ -69,41 +71,146 @@ def sig_classes(clk, ce, reset, dout, debug):
 	mem0, mem1 = [ Bus(8, 8) for i in range(2) ]
 	counter = Signal(modbv(0)[8:])
 
+#	ce_d = [ Signal(bool(0)) for i in range(2) ]
+	ce_d0, ce_d1 = [ Signal(bool(0)) for i in range(2) ]
+
 	ctr = up_counter(clk, ce, reset, counter)
-	inst_mem = simple_lut(clk, mem0)
+	inst_mem0 = simple_lut(clk, mem0)
+	inst_mem1 = simple_lut(clk, mem1)
+
+	@always_seq(clk.posedge, reset)
+	def delay():
+		ce_d0.next = ce
+		ce_d1.next = ce_d0
 
 	@always_comb
 	def assign():
-		dout.next = mem0.data
+		if ce_d1 == True:
+			dout.next = mem0.data ^ mem1.data
+		else:
+			dout.next = 0
+		debug.next = 0
 		mem0.en.next = ce
+		mem1.en.next = ce_d0
 		mem0.addr.next = counter
+		mem1.addr.next = counter
 
 	return instances()
+
+@block
+def sig_classes1(clk, ce, reset, dout, debug):
+	"Case: Signals are wired explicitely"
+	mem0, mem1 = [ Bus(8, 8) for i in range(2) ]
+	counter = Signal(modbv(0)[8:])
+
+	ce_d = [ Signal(bool(0)) for i in range(2) ]
+
+	ctr = up_counter(clk, ce, reset, counter)
+	inst_mem0 = simple_lut(clk, mem0)
+	inst_mem1 = simple_lut(clk, mem1)
+
+	@always_seq(clk.posedge, reset)
+	def delay():
+		ce_d[0].next = ce
+		ce_d[1].next = ce_d[0]
+
+	@always_comb
+	def assign():
+		if ce_d[1] == True:
+			dout.next = mem0.data ^ mem1.data
+		else:
+			dout.next = 0
+		debug.next = 0
+		mem0.en.next = ce
+		mem1.en.next = ce_d[0]
+		mem0.addr.next = counter
+		mem1.addr.next = counter
+
+	return instances()
+
+@block
+def sig_array(clk, ce, reset, dout, debug):
+	"Signal array wiring"
+	counter = Signal(modbv(0)[8:])
+	lq = [ Signal(modbv(0)[8:]) for i in range(2) ]
+
+	for i in range(2):
+		inst_lfsr1 = lfsr8(clk, ce, reset, i, lq[i])
+	# inst_lfsr2 = lfsr8(clk, ce, reset, 2, lq[1])
+
+	@always_comb
+	def assign():
+		dout.next = lq[0] ^ lq[1]
+
+	return instances()
+
+@block
+def unit(clk, ce, reset, ia, ib, q):
+
+	@always_seq(clk.posedge, reset)
+	def assign():
+		q.next = ia ^ ib
+
+	return instances()
+	
+
+@block
+def unit_array(clk, ce, reset, dout, debug):
+	"""Procedural instancing and signal arrays"""
+
+	val = [ Signal(bool(0)) for i in range(3) ]
+
+	o = Signal(modbv()[8:])
+	inst_lfsr1 = lfsr8(clk, ce, reset, 0, o)
+
+	inst = [ unit(clk, 1, reset, o(i*2), o(i*2 + 1), val[i]) for i in range(3) ]
+
+	@always_comb
+	def assign():
+		debug.next = val[0] ^ val[1] ^ val[2]
+		dout.next = o
+
+	return instances()
+
 
 @block
 def sig_classes_hier(clk, ce, reset, dout, debug):
 	"Case: submodule is driver"
 	b = Bus(8, 8)
 	
-	o, p = [ Signal(intbv()[8:]) for i in range(2) ]
 	q = Signal(intbv()[8:])
 
 	inst_lfsr2 = lfsr8(clk, ce, reset, 2, b.data)
 	inst_lfsr1 = lfsr8(clk, True, reset, 0, b.addr)
 	# BUG: b.data/b.addr not resolved, falls back to parent 'dout'
-	inst_logic = simple_logic_comb(o, p, dout)
+	inst_logic = simple_logic_comb(b.data, b.addr, dout)
 
 	return instances()
 
 @block
 def sig_classes_hier_namespace(clk, ce, reset, dout, debug):
-	"Make sure name space does not collide"
+	"Submodule is driver to bus class"
 	b = Bus(8, 8)
 
-	inst_lfsr2 = lfsr8(clk, ce, reset, 2, b.addr)
-	inst_lfsr1 = lfsr8(clk, True, reset, 0, b.data)
+	valid0, valid1 = [ Signal(bool(0)) for i in range(2) ]
+	data = Signal(intbv()[8:])
 
-	inst_logic = simple_logic(clk, b.addr, b.data, dout)
+	inst_lfsr2 = lfsr8(clk, ce, reset, 2, b.addr)
+	inst_lfsr1 = lfsr8(clk, ce, reset, 0, b.data)
+
+	inst_logic = simple_logic(clk, b.addr, b.data, data)
+
+	@always(clk.posedge)
+	def worker():
+		valid1.next = valid0
+		valid0.next = ce
+
+	@always_comb
+	def assign():
+		if valid1:
+			dout.next = data
+		else:
+			dout.next = 0
 
 	return instances()
 
@@ -136,10 +243,12 @@ def nested_hier(clk, ce, reset, dout, debug, DWIDTH = 8):
 	return instances()
 
 
-UUT_LIST = [ lfsr8_multi, nested_hier, sig_classes, sig_classes_hier ]
+UUT_LIST = [ lfsr8_multi, nested_hier, sig_classes ]
+UUT_LIST += [ sig_classes_hier, sig_classes_hier_namespace ]
+UUT_LIST += [ unit_array, sig_classes1 ]
 
 # Unresolved cases
-UUT_LIST_UNRESOLVED = [ sig_classes_hier_namespace ]
+UUT_LIST_UNRESOLVED = [ ]
 
 
 @pytest.mark.parametrize("uut", UUT_LIST)

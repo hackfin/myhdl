@@ -26,8 +26,11 @@ def Rom(addr, data, INIT_DATA):
 
 	@synthesis(myhdl_builtin)
 	def implementation(module, interface):
-		in_addr = interface.addWire(addr)
-		out_data = interface.addWire(data, True)
+		in_addr = interface.addPort("addr")
+		out_data = interface.addPort("data", True)
+
+		# Explicitely connect external address wire to port wire:
+		module.connect(in_addr, interface.interface['rom_addr'][0])
 
 		dbits = out_data.size()
 		abits = in_addr.size()
