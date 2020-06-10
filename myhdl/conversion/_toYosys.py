@@ -10,6 +10,7 @@ from myhdl._always_seq import _AlwaysSeq
 from myhdl._always import _Always
 
 from myhdl._Signal import _Signal, _WaiterList, _PosedgeWaiterList, _NegedgeWaiterList
+from myhdl._bulksignal import _BulkSignalBase
 
 from myhdl._compat import StringIO
 
@@ -951,7 +952,6 @@ def infer_handle_interface(design, instance):
 
 	argnames = inspect.signature(blk.func).parameters.items()
 
-	# instance.symdict = parent_wires # XXX
 	m.collectWires(instance, argnames)
 
 	return m
@@ -1000,22 +1000,51 @@ def convert_rtl(h, instance, design):
 
 	# Create submodule instances as cells:
 	print(76 * '=')
-	for name, inst in instance.instances:
-		key = create_key(inst)
-		infer_interface(inst)
+	for name, blkinst in instance.instances:
+		key = create_key(blkinst)
+		infer_interface(blkinst)
 		print("++++++++  %s  ++++++++" % key)
 
 		c = m.addCell(name, key)
 
 		inst_decl = h.instdict[name]
 
-		for n in inst.argnames:
+		d = blkinst.argdict.copy()
+
+		for n, i in inst_decl.wiremap.items():
+			print(BLUEBG + ">> %s" % (n) + OFF)
+			sig, _ = i
 			try:
-				i = inst_decl.wiremap[n]
-				print(BLUEBG + "%s --> `%s` : %s" % (n, i[0]._id, i) + OFF)
-				m.wire_connect(c, n, i)
+				w = m.getCorrespondingWire(sig)
+				d.pop(n) # Make sure to pop here, it could fail
+				c.setPort(n, w)
 			except KeyError:
-				print(REDBG + "WARNING: unconnected %s" % n + OFF)
+				print("unconnected (internal) wire %s" % n)
+
+		for n, a in d.items():
+			w = m.getCorrespondingWire(a)
+			if not w:
+				raise KeyError("Wire %s not found" % n)
+			c.setPort(n, w)
+
+		m.dump_wires()
+
+#		for n in blkinst.argnames:
+#			print(BLUEBG + "$$ %s" % (n) + OFF)
+#			try:
+#				i = inst_decl.wiremap[n]
+#				# print(BLUEBG + "%s --> `%s` : %s" % (n, i[0]._id, i) + OFF)
+#				m.port_connect(c, n, i)
+#			except KeyError:
+#				bs = blkinst.argdict[n]
+#				if hasattr(bs, '__slots__'):
+#					print("RESOLVE BULK %s" % n)
+#					w = m.findWireByName(n)
+#					if not w:
+#						raise KeyError("Wire %s not found" % n)
+#					c.setPort(n, w)
+#				else:
+#					print(REDBG + "WARNING: unconnected %s" % n + OFF)
 				
 
 	m.finish(design) # Hack

@@ -54,7 +54,6 @@ def _get_sigdict(sigs, symdict):
 	"""
 
 	sigdict = {}
-	print("SIGNALS", len(sigs))
 	for i, s in enumerate(sigs):
 		found = False
 		for n, v in symdict.items():
@@ -69,9 +68,8 @@ def _get_sigdict(sigs, symdict):
 						sigdict[identifier] = s
 						found = True
 						break
-
 		if not found:
-			raise SystemError("Could not retrieve symbol of signal argument #%d" % i)
+			raise SystemError("Could not retrieve symbol of signal argument #%d" % (i + 1))
 
 	return sigdict
 

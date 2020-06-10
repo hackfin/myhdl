@@ -253,7 +253,6 @@ UUT_LIST += [ (rom2, RomBench) ]
 def test_memory(uut, bench):
 	run_tb(cosim_bench(uut, bench), 2000)
 
-@pytest.mark.xfail
 def test_ram():
 	"""RAM unit test"""
 	def convert(unit):

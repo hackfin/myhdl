@@ -17,6 +17,8 @@ from myhdl._block import _Block
 from myhdl._blackbox import _BlackBox
 
 from myhdl._ShadowSignal import _ShadowSignal, _SliceSignal, _TristateDriver
+from myhdl._bulksignal import _BulkSignalBase
+
 from myhdl.conversion._misc import (_get_argnames, _error)
 
 from pyosys import libyosys as ys
@@ -224,14 +226,15 @@ def infer_interface(blk):
 
 	# now expand the interface objects
 	for name, obj in objs:
-		if hasattr(obj, '__dict__'):
+		if isinstance(obj, _BulkSignalBase):
+			obj.expand(v.argdict, v.argnames)
+		elif hasattr(obj, '__dict__'):
+			print("Legacy class %s" % name)
 			# must be an interface object (probably ...?)
 			expandinterface(v, name, obj)
-		# TODO: __slot__ class support
 
 	blk.argnames = v.argnames
 	blk.argdict = v.argdict
-
 
 def dump(n):
 	if isinstance(n, ast.Num):
@@ -321,20 +324,8 @@ class Instance:
  When seen first (driven) in B, it's registered as local name `b_out`.
  When seen first in A, it takes the name `a_in`.
 
- Solution:
 
- During expansion of the interface in the block initialization, we assign an
- original signal name in the top level name space of the module.
-
- XXX REVISIT WHEN DONE:
-
- During analysis, a wire map is created as follows:
- - When a new local name `._name` is created, the signal's `._origname`
-   is used as key for insertion into the module symbol dictionary.
-   From this entry, a per-module wire is created.
- - The ._name of a signal during 'elaboration' is obviously different
-   than the local wire name created (according to argument names).
-   Therefore we need to maintain a lookup `.wiremap` map.
+To preserve hierarchy, a .wiremap is maintained. See analyze_signals().
 
   Input/Output port handling
   ===========================
@@ -348,9 +339,9 @@ class Instance:
 
 """
 
-	__slots__ = ['level', 'obj', 'subs', 'sigdict', 'symdict', 'memdict', 'wiremap', 'name', 'genlist', 'instances', 'cell']
+	__slots__ = ['level', 'obj', 'subs', 'sigdict', 'symdict', 'memdict', 'wiremap', 'name', 'genlist', 'instances', 'cell', 'msg']
 
-	def __init__(self, level, obj, subs):
+	def __init__(self, level, obj, subs, debug = False):
 		self.level = level
 		self.obj = obj
 		self.subs = subs
@@ -360,6 +351,14 @@ class Instance:
 		self.wiremap = {}
 		self.name = None
 		self.cell = False
+
+		def dummy_msg(*args, **kwargs):
+			pass
+
+		if debug:
+			self.msg = print
+		else:
+			self.msg = dummy_msg
 
 	def __repr__(self):
 		return "< Instance %s >" % self.name
@@ -378,10 +377,14 @@ class Instance:
 
 	def analyze_signals(self):
 		"""Analyze signals. We are walking the flattened hierarchy from the top,
-thus wired signals are getting their ._name on the fly"""
-		print("===== Analyze signals for %s =====" % self)
+thus wired signals are getting their ._name on the fly. Note: Bulk signals are not analyzed,
+as they appear not in the sigdict."""
+		msg = self.msg
+
+		msg("===== Analyze signals for %s =====" % self)
 		# sigs = []
 		# sigarrays = []
+
 
 		# namedict = dict(chain(sigdict.items(), memdict.items()))
 		namedict = {}
@@ -392,17 +395,17 @@ thus wired signals are getting their ._name on the fly"""
 				self.wiremap[n] = (s, True)
 				if not s._id:
 					s._id = _makeName(n, [self.name], namedict)
-					print(GREEN + "SHADOW/CLASS WIRE %s <--- <%s> := %s" % (n, s._name, s._id) + OFF)
+					msg(GREEN + "SHADOW/CLASS WIRE %s <--- <%s> := %s" % (n, s._name, s._id) + OFF)
 				else:
-					pass
-					print(GREEN + "REUSE WIRE %s <--- <%s> := %s" % (n, s._name, s._id) + OFF)
+					msg(GREEN + "REUSE WIRE %s <--- <%s> := %s" % (n, s._name, s._id) + OFF)
 				continue
 			else:
 				self.wiremap[n] = (s, False)
 				sname = _makeName(n, [], namedict)
-				s._id = _makeName(n, [self.name], namedict)
 				s._name = sname
-				print(BLUEBG + "NEW WIRE %s := %s" % (n, s._id) + OFF)
+				if not s._id:
+					s._id = _makeName(n, [self.name], namedict)
+				msg(BLUEBG + "NEW WIRE %s := %s" % (n, s._id) + OFF)
 
 			if isinstance(s, _SliceSignal):
 				continue
@@ -430,7 +433,6 @@ def create_key(inst):
 
 	return a
 
-
 class Hierarchy:
 	"""Hierarchy class for modular transfer languages which don't require flattening
 the entire design. However, they need to maintain a parameter dictionary for
@@ -443,7 +445,7 @@ differing instances of the same architecture"""
 			key = create_key(modinst)
 
 			subs = [(s.name, s) for s in modinst.subs]
-			inst = Instance(level, modinst, subs)
+			inst = Instance(level, modinst, subs, debug = True)
 			hierarchy.append(inst)
 
 			if key in self.users:
@@ -1085,52 +1087,11 @@ Used for separation of common functionality of visitor classes"""
 		name = lhs.value.id
 		key = sig._id
 
-		print("GET %s : %s" % (sig._name, sig._id))
 		outsig = m.getCorrespondingWire(sig)
 
 		self.dbg(stmt, GREEN, "PORT ASSIGN", \
 			"PORT local: '%s', sig: %s" % (name, outsig.as_wire().name))
 		m.connect(outsig, result)
-		print("outsig", sig)
-
-	def XXXhandle_toplevel_assignment1(self, stmt):
-		"Auxiliary for signal wiring"
-
-		lhs = stmt.targets[0]
-		rhs = stmt.value
-		result = stmt.syn.q
-		m = self.context
-		sig = lhs.obj 
-		name = lhs.value.id
-		if oname:
-			# Do we have an active wiring for the original name?
-			if oname in m.wiring:
-				# print("WIRING", m.wiring[oname])
-				portname = m.wiring[oname][0]
-				outsig = m.findWireByName(name, True)
-				signame = outsig.as_wire().name
-				self.dbg(stmt, GREEN, "PORT ASSIGN", \
-					"PORT local: '%s', port: '%s', sig: %s" % (name, portname, signame))
-				dst, src = (outsig, result)
-			else:
-				# Try find a locally declared signal:
-				outsig = m.findWireByName(name)
-				if outsig:
-					dst, src = (outsig, result)
-				else:
-					self.dbg(stmt, REDBG, "UNCONNECTED", \
-						"PORT local: '%s', orig: '%s'" % (name, oname))
-					raise AssertionError
-		else:
-			outsig = m.findWireByName(name, True)
-			signame = outsig.as_wire().name
-			self.dbg(stmt, BLUEBG, "SIGNAL local: '%s', %s" % (name, signame))
-			# Simply connect RHS to LHS:
-			dst, src = (outsig, result)
-
-		# dst.replace(0, src)
-		m.connect(dst, src)
-
 
 ############################################################################
 # Factory auxiliaries:
@@ -1170,7 +1131,7 @@ def convert_wires(m, c, a, n, force = False):
 	elif a == None:
 		pass
 	elif inspect.isclass(type(a)):
-		if hasattr(a, "convert_wires"):
+		if isinstance(a, _BulkSignalBase):
 			a.convert_wires(m, c)
 		else:
 			# Legacy support:

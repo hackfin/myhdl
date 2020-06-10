@@ -2,6 +2,7 @@ from pyosys import libyosys as ys
 import ast
 from myhdl._Signal import _Signal
 from myhdl._ShadowSignal import _ShadowSignal, _TristateDriver
+from myhdl._bulksignal import _BulkSignalBase
 from myhdl import intbv, EnumType, EnumItemType
 from myhdl._block import _Block, block
 from myhdl._instance import _Instantiator
@@ -322,8 +323,14 @@ class Module:
 		self.implementation = implementation
 		self.array_limit = 1024
 
+		self._debug = True
+
 		self._namespace = \
 			[ self.memories, self.arrays, self.wires, self.parent_signals ]
+
+	def debugmsg(self, msg, col = REDBG):
+		if self._debug:
+			print(col + msg + OFF)
 	
 	def __getattr__(self, name):
 		return getattr(self.module, name)
@@ -441,10 +448,7 @@ class Module:
 	def getCorrespondingWire(self, sig):
 		if not sig._id:
 			raise ValueError("Can not have None as ID")
-		try:
-			identifier = self.wireid[sig._id]
-		except KeyError:
-			raise AssertionError
+		identifier = self.wireid[sig._id]
 		w = self.findWireByName(identifier)
 		if not w:
 			raise KeyError("Wire `%s` not found" % identifier)
@@ -497,25 +501,27 @@ class Module:
 
 		return is_out, src
 
-	def collectArg(self, name, arg, argdict, force_wire = False):
+	def collectArg(self, name, arg, is_port = False, force_wire = False):
 		d = self.wires
 		if isinstance(arg, _Signal):
 			identifier = arg._id
 			if identifier == None:
 				# raise ValueError("Signal identifier none for '%s'" % arg._name)
-				print(REDBG + "WARNING: Unused signal '%s'" % arg._name + OFF)
+				self.debugmsg("WARNING: Unused signal '%s'" % arg._name)
+			if identifier in self.wireid:
+				self.debugmsg("Signal `%s` already in ID lookup table" % identifier)
+				return
+
 			self.wireid[identifier] = name # Lookup table for wire ID
 			s = len(arg)
-			if name in argdict:
-				w = self.addWire(name, s, True)
-			else:
-				w = self.addWire(name, s, False)
+			w = self.addWire(name, s, is_port)
 			sig = YSignal(w)
 			is_out, src = self.signal_output_type(arg)
 			# TODO: Clock signal could be flagged for debugging purposes
 			# Currently, it tends to be regarded as 'floating'
 			if is_out:
-				# print("\tWire OUT (%s) `%s`, id: `%s`, driver: %s" % (arg._driven, name, identifier, src))
+				self.debugmsg("\tWire OUT (%s) `%s`, id: `%s`, driver: %s" % \
+					(arg._driven, name, identifier, src), col = BLUEBG)
 				w.setDirection(IN=False, OUT=True)
 				# If we need to create a register, replace this wire
 #				if arg._driven == "reg":	
@@ -525,10 +531,10 @@ class Module:
 #					self.connect(buf, sig)
 
 			elif arg._read:
-				# print("\tWire IN `%s`, id: `%s`, origin: %s" % (name, identifier, src))
+				self.debugmsg("\tWire IN `%s`, id: `%s`, origin: %s" % (name, identifier, src), col = BLUEBG)
 				w.setDirection(IN=True, OUT=False)
 			else:
-				# print("\tWire FLOATING %s, id: %s" % (name, identifier))
+				self.debugmsg("\tWire FLOATING %s, id: %s" % (name, identifier), col = BLUEBG)
 				# FIXME
 				# For now, we allocate this port as a dummy, anyway
 				# Also note: clk ports are not properly marked as 'read'
@@ -566,15 +572,14 @@ class Module:
 			pass
 		elif isinstance(arg, tuple):
 			pass
-		elif hasattr(arg, "__slots__"):
-			# Assume BulkSignal compatible class
-			arg.collect(self, name)
+		elif isinstance(arg, _BulkSignalBase):
+			arg.collect(self)
 		else:
 			# print("Bus/Port class %s" % name)
 			try:
 				for i in arg.__dict__.items():
 					# print("%s.%s" % (name, i[0]))
-					self.collectArg(name + "_" + i[0], i[1], argdict)
+					self.collectArg(name + "_" + i[0], i[1], is_port)
 			except AttributeError:
 				raise ValueError("Unhandled object type %s for %s" % (type(arg), name))
 			
@@ -597,6 +602,13 @@ class Module:
 			shadow_sig.append(elem)
 		self.wires[name] = shadow_sig
 
+	def dump_wires(self):
+		for n, i in self.wireid.items():
+			print("WIRE ID '%s' : %s" % (n, i))
+			
+		for n, i in self.wires.items():
+			print("WIRE '%s'" % n)
+
 	def collectWires(self, instance, args):
 		def insert_wire(wtype, d, n, s):
 			if not s._id:
@@ -608,7 +620,7 @@ class Module:
 				self.wireid[s._id] = n
 				return w
 			else:
-				# print("%s Wire '%s' id:`%s` init: %d" % (wtype, n, s._id, s._init))
+				self.debugmsg("%s Wire '%s' id:`%s` init: %d" % (wtype, n, s._id, s._init), col = BLUEBG)
 				l = get_size(s)
 				w = self.addSignal(n + "_w", l)
 				d[n] = w
@@ -624,15 +636,18 @@ class Module:
 		l = len(blk.args)
 		# print("# of block arguments:", l)
 
+		remaining = instance.symdict
+
 		for i, a in enumerate(args):
 			name, param = a
-			# print("ARG", name)
+			is_port = name in blk.argdict
 			if name in sigs:
 				sig = sigs[name]
-				self.collectArg(name, sig, blk.argdict)
+				self.collectArg(name, sig, is_port)
 			elif i < l:
+				remaining.pop(name)
 				arg = blk.args[i]
-				self.collectArg(name, arg, blk.argdict)
+				self.collectArg(name, arg, is_port)
 			else:
 				print("SKIP default arg %s" % name)
 
@@ -649,20 +664,22 @@ class Module:
 		
 		# z = input("HIT RETURN")
 
-		remaining = instance.symdict
 		
 		# Collect local Class signals:
 		for n, el in remaining.items():
 			# Note: Instantiators can also create members, depending
 			# on order of analysis (random dict item order)
 			if inspect.isclass(type(el)) and not isinstance(el, _Instantiator):
-				if hasattr(el, '__dict__'):
+				if isinstance(el, _BulkSignalBase):
+					el.collect(self, False)
+				elif hasattr(el, '__dict__'):
 					for mn, member in el.__dict__.items():
 						if isinstance(member, _Signal):
 							identifier = "%s_%s" % (n, mn)
 							if identifier not in sigs:
 								w = insert_wire("CSIG", d, identifier, member)
 								# print("Class sig: %s.%s" % (n, mn))
+
 		
 		# Now resolve arrays (a.k.a. memories)
 		# TODO: Do that only with true arrays
@@ -684,7 +701,7 @@ class Module:
 							pass
 							# print("\tADD WIRE id %s" % s._id)
 						self.wireid[s._id] = identifier
-						w = insert_wire("INTERNAL", d, identifier, s)
+						w = insert_wire("MEM INTERNAL", d, identifier, s)
 						initvalues[identifier] = s._init
 					else:
 						pass
@@ -733,7 +750,7 @@ class Module:
 
 		return mem
 
-	def wire_connect(self, cell, portname, sigspec):
+	def port_connect(self, cell, portname, sigspec):
 		sig, _ = sigspec
 		w = self.getCorrespondingWire(sig)
 		# This can fail on a const

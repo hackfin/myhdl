@@ -70,7 +70,6 @@ def always_seq(edge, reset):
 		reset._read = True
 		reset._used = True
 		sigargs.append(reset)
-	print("CALLINFO_NAME (SEQ)", callinfo.name)
 	sigdict = _get_sigdict(sigargs, callinfo.symdict)
 
 	def _always_seq_decorator(func):

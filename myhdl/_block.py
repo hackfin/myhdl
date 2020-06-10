@@ -299,8 +299,6 @@ class _Block(object):
 			if self.symdict is None:
 				self.symdict = inst.callinfo.symdict
 			if isinstance(inst, _Instantiator):
-				# print("WANZ IN", inst.callername, inst.inputs)
-				# print("WANZ OUT", inst.callername, inst.outputs)
 				usedsigdict.update(inst.sigdict)
 				usedlosdict.update(inst.losdict)
 		if self.symdict is None:
