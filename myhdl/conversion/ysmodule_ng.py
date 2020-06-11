@@ -326,7 +326,7 @@ class Module:
 		def dummy(a, col = None):
 			pass
 
-		if True:
+		if not ENABLE_DEBUG:
 			self.debugmsg = dummy
 
 
@@ -661,7 +661,7 @@ class Module:
 			if not n in blk.argdict:
 				if isinstance(s, _ShadowSignal):
 					shadow_syms[n] = s
-				else:
+				elif not s._id in self.wireid:
 					w = insert_wire("INTERNAL", d, n, s)
 					initvalues[n] = s._init
 		
@@ -742,7 +742,7 @@ class Module:
 
 	def collectMemories(self, instance):
 		for m in instance.memdict.items():
-			print("MEMORY", m[0], m[1])
+			print("MEMORY '%s'" % m[0])
 			self.memories[m[0]] = ( m[1] )
 
 	def addMemory(self, name):

@@ -3,10 +3,6 @@
 # (c) 2020 section5.ch
 #
 
-# Turn on for instance debugging:
-DEBUG_INSTANCE = False
-
-
 import ast
 import inspect
 import myhdl
@@ -40,7 +36,7 @@ DEFER_MUX, DEFER_RESERVED = range(2)
 S_NEUTRAL, S_COLLECT, S_MUX , S_TIE_DEFAULTS = range(4)
 
 class DebugOutput:
-	debug = False
+	debug = ENABLE_DEBUG
 	def dbg(self, node, kind, msg = "DBG", details = "MARK"):
 		lineno = self.getLineNo(node)
 		lineno += self.tree.lineoffset
@@ -450,7 +446,7 @@ differing instances of the same architecture"""
 			key = create_key(modinst)
 
 			subs = [(s.name, s) for s in modinst.subs]
-			inst = Instance(level, modinst, subs, debug = DEBUG_INSTANCE)
+			inst = Instance(level, modinst, subs, debug = ENABLE_DEBUG)
 			hierarchy.append(inst)
 
 			if key in self.users:
@@ -1082,18 +1078,16 @@ Used for separation of common functionality of visitor classes"""
 					else:
 						m.connect(o, other)
 
-
 	def handle_toplevel_assignment(self, stmt):
 		lhs = stmt.targets[0]
 		rhs = stmt.value
 		result = stmt.syn.q
 		m = self.context
 		sig = lhs.obj 
-		name = lhs.value.id
-		key = sig._id
 
 		outsig = m.getCorrespondingWire(sig)
 
+		name = lhs.value.id
 		self.dbg(stmt, GREEN, "PORT ASSIGN", \
 			"PORT local: '%s', sig: %s" % (name, outsig.as_wire().name))
 		m.connect(outsig, result)
