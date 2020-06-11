@@ -1012,40 +1012,23 @@ def convert_rtl(h, instance, design):
 		d = blkinst.argdict.copy()
 
 		for n, i in inst_decl.wiremap.items():
-			print(BLUEBG + ">> %s" % (n) + OFF)
+			# print(BLUEBG + ">> %s" % (n) + OFF)
 			sig, _ = i
-			try:
-				w = m.getCorrespondingWire(sig)
-				d.pop(n) # Make sure to pop here, it could fail
-				c.setPort(n, w)
-			except KeyError:
-				print("unconnected (internal) wire %s" % n)
+			if sig._used:
+				try:
+					w = m.getCorrespondingWire(sig)
+					d.pop(n) # Make sure to pop here, it could fail
+					c.setPort(n, w)
+				except KeyError:
+					print("unconnected (internal) wire %s" % n)
+			else:
+				print(REDBG + "Unused signal: %s" % sig._name + OFF)
+
+		#m.dump_wires()
 
 		for n, a in d.items():
 			w = m.getCorrespondingWire(a)
-			if not w:
-				raise KeyError("Wire %s not found" % n)
 			c.setPort(n, w)
-
-		m.dump_wires()
-
-#		for n in blkinst.argnames:
-#			print(BLUEBG + "$$ %s" % (n) + OFF)
-#			try:
-#				i = inst_decl.wiremap[n]
-#				# print(BLUEBG + "%s --> `%s` : %s" % (n, i[0]._id, i) + OFF)
-#				m.port_connect(c, n, i)
-#			except KeyError:
-#				bs = blkinst.argdict[n]
-#				if hasattr(bs, '__slots__'):
-#					print("RESOLVE BULK %s" % n)
-#					w = m.findWireByName(n)
-#					if not w:
-#						raise KeyError("Wire %s not found" % n)
-#					c.setPort(n, w)
-#				else:
-#					print(REDBG + "WARNING: unconnected %s" % n + OFF)
-				
 
 	m.finish(design) # Hack
 	print("DONE instancing submodules")

@@ -2,6 +2,11 @@
 #
 # (c) 2020 section5.ch
 #
+
+# Turn on for instance debugging:
+DEBUG_INSTANCE = False
+
+
 import ast
 import inspect
 import myhdl
@@ -445,7 +450,7 @@ differing instances of the same architecture"""
 			key = create_key(modinst)
 
 			subs = [(s.name, s) for s in modinst.subs]
-			inst = Instance(level, modinst, subs, debug = True)
+			inst = Instance(level, modinst, subs, debug = DEBUG_INSTANCE)
 			hierarchy.append(inst)
 
 			if key in self.users:

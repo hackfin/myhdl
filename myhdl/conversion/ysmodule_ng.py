@@ -323,14 +323,18 @@ class Module:
 		self.implementation = implementation
 		self.array_limit = 1024
 
-		self._debug = True
+		def dummy(a, col = None):
+			pass
+
+		if True:
+			self.debugmsg = dummy
+
 
 		self._namespace = \
 			[ self.memories, self.arrays, self.wires, self.parent_signals ]
 
 	def debugmsg(self, msg, col = REDBG):
-		if self._debug:
-			print(col + msg + OFF)
+		print(col + msg + OFF)
 	
 	def __getattr__(self, name):
 		return getattr(self.module, name)
@@ -508,7 +512,7 @@ class Module:
 			if identifier == None:
 				# raise ValueError("Signal identifier none for '%s'" % arg._name)
 				self.debugmsg("WARNING: Unused signal '%s'" % arg._name)
-			if identifier in self.wireid:
+			elif identifier in self.wireid:
 				self.debugmsg("Signal `%s` already in ID lookup table" % identifier)
 				return
 
@@ -579,19 +583,18 @@ class Module:
 			try:
 				for i in arg.__dict__.items():
 					# print("%s.%s" % (name, i[0]))
-					self.collectArg(name + "_" + i[0], i[1], is_port)
+					self.collectArg(name + "_" + i[0], i[1], True)
 			except AttributeError:
 				raise ValueError("Unhandled object type %s for %s" % (type(arg), name))
 			
 	def collectAliases(self, sig, name):
 		"Collect alias signals from Shadow signal"
 		shadow_sig = self.addSignal('alias_' + name, 0)
-		# print("COLLECT SHADOWS FOR '%s'" % name)
+		self.debugmsg("COLLECT SHADOWS FOR '%s'" % name, col = GREEN)
+		self.wireid[sig._id] = name
 		for a in reversed(sig._args):
 			if isinstance(a, _Signal):
 				identifier = a._id
-				# print("ID:", identifier)
-				# elem = self.findWireByName(identifier, True)
 				elem = self.getCorrespondingWire(a)
 
 			elif isinstance(a, (intbv, bool)):
@@ -749,12 +752,6 @@ class Module:
 		self.cache_mem[identifier] = mem
 
 		return mem
-
-	def port_connect(self, cell, portname, sigspec):
-		sig, _ = sigspec
-		w = self.getCorrespondingWire(sig)
-		# This can fail on a const
-		cell.setPort(portname, w)
 
 	def infer_rom(self, romobj, sig_data, wire_addr):
 		"Infer ROM using the blackbox synthesis method"
