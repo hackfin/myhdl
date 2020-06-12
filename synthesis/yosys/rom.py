@@ -17,8 +17,8 @@ def Rom(addr, data, INIT_DATA):
 
 	@synthesis(yshelper.yosys)
 	def implementation(module, interface):
-		in_addr = interface.addWire(addr)
-		out_data = interface.addWire(data, True)
+		in_addr = interface.addPort('addr')
+		out_data = interface.addPort('data', True)
 
 		dbits = out_data.size()
 		abits = in_addr.size()

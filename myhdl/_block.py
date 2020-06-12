@@ -220,7 +220,7 @@ class _Block(object):
 		self.subs = _flatten(func(*args, **kwargs))
 		self._verifySubs()
 		self._updateNamespaces()
-		self._signalsInit() # XXX
+		# self._signalsInit() # XXX
 		self.verilog_code = self.vhdl_code = None
 		self.sim = None
 		if hasattr(deco, 'verilog_code'):
@@ -254,14 +254,23 @@ class _Block(object):
 				return
 			for n, i in names.items():
 				if isinstance(i, _Signal):
-					if i._origname == None:
+					if i._id == None:
 						name = parent + n
 #						print("Init Signal name %s" % name)
-						i._origname = name
+						i._id = name
 #					else:
-#						print("Signal already has name %s" % i._origname)
-				if inspect.ismodule(i):
+#						print("Signal already has name %s" % i._id)
+				elif inspect.ismodule(i):
 					pass
+				elif isinstance(i, (list, tuple)) and n != 'senslist' and n != 'args':
+					for j, el in enumerate(i):
+						if isinstance(el, _Signal):
+							if el._id == None:
+								name = n + '[%d]' % j
+								print("Init Array signal name %s" % name)
+								el._name = name # XXX
+								el._id = name
+
 				elif isinstance(i, block):
 					pass
 				elif hasattr(i, '__dict__'):
@@ -270,11 +279,13 @@ class _Block(object):
 					# 	print(n, obj)
 
 					expand(n + '_', i.__dict__, level + 1)
+				elif hasattr(i, '__slots__'):
+					print("Container (slot) %s, type %s" % (n, type(i).__name__))
+					pass # TODO
+#				else:
+#					print("Other signal '%s' type %s" % (n, type(i).__name__))
 		# print("Initializing signals for %s" % self.name)	
 		expand("", self.callinfo.localdict, 0)
-		# z = input("BLOCK, HIT RETURN")
-		
-		
 
 	def _updateNamespaces(self):
 		# dicts to keep track of objects used in Instantiator objects
@@ -296,10 +307,10 @@ class _Block(object):
 		# sigdict and losdict from Instantiator objects may contain new
 		# references. Therefore, update the symdict with them.
 		# To be revisited.
-#		print("SIG %s" % self.name)
+#		print("==== SIG %s ====" % self.name)
 #		for n, i in usedsigdict.items():
-#			print(n)
-#		print("LOS %s" % self.name)
+#			print(n, len(i))
+#		print("==== LOS %s ====" % self.name)
 #		for n, i in usedlosdict.items():
 #			print(n)
 #		print()

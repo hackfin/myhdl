@@ -36,8 +36,8 @@ def user_assert(a, b, EN):
 		"Adds an assert cell for a == b"
 		name = interface.name
 
-		in_a = interface.addWire(a)
-		in_b = interface.addWire(b)
+		in_a = interface.addPort('a')
+		in_b = interface.addPort('b')
 		q = module.addSignal(yshelper.PID("eq"), 1)
 
 		en = yshelper.ConstSignal(EN, 1)
@@ -62,9 +62,9 @@ def xor(a, b, q):
 		"This implementation just adds a simple native XOR cell"
 		name = interface.name
 
-		in_a = interface.addWire(a)
-		in_b = interface.addWire(b)
-		out_q = interface.addWire(q, True)
+		in_a = interface.addPort('a')
+		in_b = interface.addPort('b')
+		out_q = interface.addPort('q', True)
 
 		xor_inst = module.addXor(yshelper.ID(name + "_xor"), in_a, in_b, out_q)
 
@@ -83,9 +83,9 @@ def ext_xor(a, b, q):
 		name = interface.name
 		c = module.addCell(name + "_cell", "user_xor")
 
-		in_a = interface.addWire(a)
-		in_b = interface.addWire(b)
-		out_q = interface.addWire(q, True)
+		in_a = interface.addPort('a')
+		in_b = interface.addPort('b')
+		out_q = interface.addPort('q', True)
 		w = module.addWire(None, out_q.size())
 
 		c.setPort("A", in_a)
@@ -115,9 +115,9 @@ def bb_ext_logic_parameter(a, b, q, WHICH=1):
 		name = interface.name
 		c = module.addCell(name + "_cell", "user_logic")
 
-		in_a = interface.addWire(a)
-		in_b = interface.addWire(b)
-		out_q = interface.addWire(q, True)
+		in_a = interface.addPort('a')
+		in_b = interface.addPort('b')
+		out_q = interface.addPort('q', True)
 		w = module.addWire(None, out_q.size())
 
 		c.setPort("A", in_a)
@@ -127,6 +127,34 @@ def bb_ext_logic_parameter(a, b, q, WHICH=1):
 		c.setParam('WHICH', WHICH)
 
 	return simulation, implementation
+
+@blackbox
+def ext_xor_cls(a, b, q):
+	"XOR black box cell, class parameters"
+	@always_comb
+	def simulation():
+		q.data.next = a.data ^ b.data
+		q.en.next = a.en & b.en
+
+	@synthesis(yshelper.yosys)
+	def implementation(module, interface):
+		"This implementation just adds a simple native XOR cell"
+		name = interface.name
+
+		in_a = interface.addPort('a_data')
+		in_b = interface.addPort('b_data')
+		out_q = interface.addPort('q_data', True)
+
+		xor_inst = module.addXor(yshelper.ID(name + "_xor"), in_a, in_b, out_q)
+
+		in_a = interface.addPort('a_en')
+		in_b = interface.addPort('b_en')
+		out_q = interface.addPort('q_en', True)
+
+		and_inst = module.addAnd(yshelper.ID(name + "_and"), in_a, in_b, out_q)
+
+	return simulation, implementation
+
 
 @blackbox
 def _TRELLIS_DPR16X4(clk1, a1addr, a1data, b1addr, b1data, b1en, CLKPOL2, INIT):
@@ -147,12 +175,12 @@ def _TRELLIS_DPR16X4(clk1, a1addr, a1data, b1addr, b1data, b1en, CLKPOL2, INIT):
 		"Create cell for built-in primitive"
 		name = interface.name
 		c = module.addCell(name + "_dpr16x4", "__TRELLIS_DPR16X4")
-		port_clk = interface.addWire(clk1)
-		port_a1addr = interface.addWire(a1addr)
-		port_a1data = interface.addWire(a1data, True)
-		port_b1addr = interface.addWire(b1addr)
-		port_b1data = interface.addWire(b1data)
-		port_b1en = interface.addWire(b1en)
+		port_clk = interface.addPort(clk1)
+		port_a1addr = interface.addPort('a1addr')
+		port_a1data = interface.addPort('a1data', True)
+		port_b1addr = interface.addPort('b1addr')
+		port_b1data = interface.addPort('b1data')
+		port_b1en = interface.addPort('b1en')
 
 		# port_read = module.addSignal(yshelper.PID("a1read"), 4)
 		# port_read.as_wire().port_input = True 
@@ -242,6 +270,25 @@ def inst_ext_parameter_blackbox(clk, ce, reset, dout, debug):
 
 	return instances()
 
+class Record:
+	def __init__(self):
+		self.data = Signal(intbv(0)[8:])
+		self.en = Signal(bool(0))
+
+@block
+def inst_classarg_blackbox(clk, ce, reset, dout, debug):
+	a, b, q = [ Record() for i in range(3) ]
+	inst_lfsr1 = lfsr8(clk, ce, reset, 5, a.data)
+	inst_lfsr2 = lfsr8(clk, ce, reset, 0, b.data)
+
+	inst_xor = ext_xor_cls(a, b, q)
+
+	@always_comb
+	def assign():
+		dout.next = q.data
+		debug.next = q.en
+
+	return instances()
 
 ############################################################################
 # TESTS
@@ -295,6 +342,15 @@ def test_blackbox_ext():
 	design.write_ilang("ext_xor")
  
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)
+
+def test_blackbox_classarg():
+	UNIT = inst_classarg_blackbox
+	arst = False
+	design = design_from_entity(UNIT, arst)
+
+	design.write_verilog("inst_classarg_blackbox", True)
+
+	run_tb(tb_unit(UNIT, mapped_uut, arst), 2000)
 
 def _test_blackbox_ext_parameter():
 	UNIT = inst_ext_parameter_blackbox
