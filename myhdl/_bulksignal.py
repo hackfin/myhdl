@@ -10,19 +10,17 @@ attribute in the class definition.
 Details:
 
 By default, MyHDL puts signals in the `sigdict` of an instance object only when 
-they are used. In some cases however, it is required to have a fixed set of signals,
-for example for a predefined black box interface.
+they are used. In some cases however, it is required to have a fixed set of
+signals, for example for a predefined black box interface.
 
-When a BulkSignal is found as argument, it is therefore always completely expanded.
-However, it is except from analysis, therefore it must be treated separately.
+When a BulkSignal is found as argument, it is therefore always completely
+expanded. However, it is except from analysis, therefore it must be treated
+separately.
 
-When parts of it are used by third party logik, members of a bulk signal appear in
-the signal list.
+When parts of it are used by third party logik, members of a bulk signal
+appear in the signal list.
 
 """
-
-
-
 
 	def __init__(self, name = ""):
 		self._name = name

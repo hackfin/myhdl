@@ -13,6 +13,12 @@ from .ysdebug import *
 
 from .synmapper import *
 
+
+def bitfield(n):
+	l = [ys.State(int(digit)) for digit in bin(n)[2:]]
+	l.reverse()
+	return l
+
 def YSignal(x):
 	return ys.SigSpec(x.get())
 
@@ -50,27 +56,39 @@ def match(a, b):
 	la, lb = a.q.size(), b.q.size()
 
 	l = la
+	trunc = False
 
 	c = 0
 	if la < lb: # and isinstance(node.left.obj, _Signal):
 		if a.is_signed and not b.is_signed:
+			print("A < B")
 			lb += 1
+			trunc = True
 		l = lb
-		a.q.extend_u0(l, a.is_signed)
+		tmp = ys.SigSpec(a.q)
+		tmp.extend_u0(l, a.is_signed)
+		a.q = tmp
 	elif la > lb: # and isinstance(node.right.obj, _Signal):
 		if b.is_signed and not a.is_signed:
+			print("A > B")
 			l += 1
-		b.q.extend_u0(l, b.is_signed)
+			trunc = True
 
+		tmp = ys.SigSpec(b.q)
+		tmp.extend_u0(l, b.is_signed)
+		b.q = tmp
 	else:
 		# Nasty one: If signednesses are not equal,
 		# we need one more headroom bit to determine
 		if a.is_signed != b.is_signed:
+			print("A == B, no equal signedness")
 			l += 1
-			a.q.extend_u0(l, a.is_signed)
-			b.q.extend_u0(l, b.is_signed)
-	
-	return l
+			tmp0, tmp1 = a.q, b.q
+			tmp0.extend_u0(l, a.is_signed)
+			tmp1.extend_u0(l, b.is_signed)
+			a.q, b.q = tmp0, tmp1
+			trunc = True
+	return l, trunc
 
 
 def append_sig(i, a):
@@ -269,7 +287,7 @@ class BBInterface:
 class Module:
 	"Yosys module wrapper"
 
-	EX_COND, EX_SAME, EX_CARRY, EX_TWICE, EX_TRUNC = range(5)
+	EX_COND, EX_FIRST, EX_SAME, EX_CARRY, EX_TWICE, EX_TRUNC = range(6)
 
 	_unopmap = {
 		ast.USub	 :   ys.Module.addNeg,
@@ -284,8 +302,8 @@ class Module:
 		ast.Div		 : ( ys.Module.addDiv,	 EX_SAME ),
 		ast.Mod		 : ( ys.Module.addMod,	 EX_TRUNC ),
 		ast.Pow		 : ( ys.Module.addPow,	 EX_SAME ),
-		ast.LShift	 : ( ys.Module.addSshl,	 EX_SAME ),
-		ast.RShift	 : ( ys.Module.addSshr,	 EX_SAME ),
+		ast.LShift	 : ( ys.Module.addSshl,	 EX_FIRST ),
+		ast.RShift	 : ( ys.Module.addSshr,	 EX_FIRST ),
 		ast.BitOr	 : ( ys.Module.addOr,	 EX_SAME ),
 		ast.BitAnd	 : ( ys.Module.addAnd,	 EX_SAME ),
 		ast.BitXor	 : ( ys.Module.addXor,	 EX_SAME ),
@@ -344,7 +362,7 @@ class Module:
 
 		# Have to sort out cases:
 
-		l = match(a, b)
+		l, _ = match(a, b)
 
 		if a.is_signed or b.is_signed:
 			is_signed = True
@@ -364,8 +382,6 @@ class Module:
 
 	def apply_binop(self, node, a, b):
 
-		l = match(a, b)
-
 		f, ext = self._binopmap[type(node.op)]
 
 		if a.is_signed or b.is_signed:
@@ -377,13 +393,25 @@ class Module:
 
 		if ext == self.EX_COND:
 			l = 1
+		elif ext == self.EX_FIRST:
+			l = a.q.size()
+			trunc = False
 		elif ext == self.EX_TWICE:
+			l, trunc = match(a, b)
 			l *= 2
+		elif ext == self.EX_SAME:
+			l, trunc = match(a, b)
 		elif ext == self.EX_TRUNC:
-			sm.trunc = True
+			l = b.q.size()
+			trunc = True
 		elif ext == self.EX_CARRY:
-			l += 1
-			sm.trunc = True
+			l, trunc = match(a, b)
+			if not trunc:
+				l += 1
+			trunc = True
+
+
+		sm.trunc = trunc
 
 		# print("Add wire with name %s, size %d" % (name, l))
 		sm.q = self.addSignal(None, l)
@@ -419,7 +447,11 @@ class Module:
 		elif not name:
 			name = ys.new_id(__name__, lineno(), "")
 
-		self.guard_name(name, public)
+		frame = inspect.currentframe()
+		info = inspect.getouterframes(frame)[2] 
+		source = "%s:%d" % (info[1], info[2])
+
+		self.guard_name(name, source)
 
 		return Wire(self.module.addWire(name, n))
 
@@ -451,7 +483,7 @@ class Module:
 
 	def getCorrespondingWire(self, sig):
 		if not sig._id:
-			raise ValueError("Can not have None as ID")
+			raise ValueError("Can not have None as ID for %s" % sig._name)
 		identifier = self.wireid[sig._id]
 		w = self.findWireByName(identifier)
 		if not w:
@@ -615,7 +647,7 @@ class Module:
 	def collectWires(self, instance, args):
 		def insert_wire(wtype, d, n, s):
 			if not s._id:
-				print(REDBG + "WARNING: Unused signal '%s'" % n)
+				self.debugmsg("WARNING: Unused signal '%s'" % n)
 				return None
 			if isinstance(s._val, EnumItemType):
 				w = self.addSignal(n, s._nrbits)
@@ -742,7 +774,7 @@ class Module:
 
 	def collectMemories(self, instance):
 		for m in instance.memdict.items():
-			print("MEMORY '%s'" % m[0])
+			print("SIGNAL ARRAY '%s'" % m[0])
 			self.memories[m[0]] = ( m[1] )
 
 	def addMemory(self, name):

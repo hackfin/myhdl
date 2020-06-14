@@ -259,20 +259,23 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			raise Synth_Nosupp("Can't handle this YET")
 
 		# Handle synthesis mapping / resizes:
-
 		if not sm:
-			if dst.size() > src.size():
+			ds, ss = dst.size(), src.size()
+			if ds > ss:
 				self.dbg(node, BLUEBG, "EXTENSION", "signed: %s" % (repr(rhs.syn.is_signed)))
 				tmp = ys.SigSpec(src) # Create a copy, don't extend original:
 				tmp.extend_u0(dst.size(), rhs.syn.is_signed)
 				src = tmp
-			elif dst.size() < src.size():
+			elif ds < ss:
 				if rhs.syn.trunc:
 					self.dbg(node, REDBG, "TRUNC", "Implicit carry truncate: %s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
 					src = src.extract(0, dst.size())
 				else:
 					# self.dbg(node, REDBG, "OVERFLOW", "%s[%d:], src[%d:]" %(lhs.obj._name, dst.size(), src.size()))
-					self.raiseError(node, "OVERFLOW value: %s[%d:] <= x[%d:]" %(lhs.obj._name, dst.size(), src.size()))
+					if (ss - ds) > 1:
+						self.raiseError(node, "OVERFLOW value: %s[%d:] <= x[%d:]" %(lhs.obj._name, dst.size(), src.size()))
+					else:
+						self.dbg(node, REDBG, "OVERFLOW value: %s[%d:] <= x[%d:]" %(lhs.obj._name, dst.size(), src.size()))
 
 			sm = SynthesisMapper(t)
 			sm.q = src
@@ -1027,8 +1030,11 @@ def convert_rtl(h, instance, design):
 		#m.dump_wires()
 
 		for n, a in d.items():
-			w = m.getCorrespondingWire(a)
-			c.setPort(n, w)
+			if a._used:
+				w = m.getCorrespondingWire(a)
+				c.setPort(n, w)
+			else:
+				print(REDBG + "Unused port: %s" % sig._name + OFF)
 
 	m.finish(design) # Hack
 	print("DONE instancing submodules")

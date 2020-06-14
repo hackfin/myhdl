@@ -158,14 +158,6 @@ class Design:
 		ys.run_pass("write_ilang %s_mapped.il" % self.name, design)
 		ys.run_pass("hierarchy -check", design)
 
-
-
-def bitfield(n):
-	l = [ys.State(int(digit)) for digit in bin(n)[2:]]
-	l.reverse()
-	return l
-
-
 def dump_sig(x):
 
 	if x._driven:
@@ -740,9 +732,10 @@ Used for separation of common functionality of visitor classes"""
 				for n, drv in sm.drivers.items():
 					y, other, default = drv
 					if default:
-						print("TIE DEFAULT", n)
+						self.dbg(stmt, REDBG, "TIE DEFAULT", "%s" % n)
 						self.assign_default(n, default, default_assignments, True)
 					if other:
+						self.dbg(stmt, REDBG, "TIE OTHER", "%s" % n)
 						self.assign_default(n, other, default_assignments, True)
 
 					if n in default_assignments:
@@ -786,11 +779,13 @@ Used for separation of common functionality of visitor classes"""
 					for n, drv in sm.drivers.items():
 						y, other, default = drv
 						if default:
+							self.dbg(stmt, BLUEBG, "HAVE DEFAULT", "sig %s" % n)
 							ret = self.assign_default(n, default, default_assignments, True)
 							if clk == None and ret == 2:
 								self.dbg(stmt, REDBG, "LATCH_WARNING", \
 									"Incomplete 'default' assignments, latch created for %s" % n)
 						if other:
+							self.dbg(stmt, BLUEBG, "HAVE OTHER", "sig %s" % n)
 							ret = self.assign_default(n, other, default_assignments, True)
 							if clk == None and ret == 2:
 								self.dbg(stmt, REDBG, "LATCH_WARNING", \
@@ -853,7 +848,8 @@ Used for separation of common functionality of visitor classes"""
 			name = stmt.id
 			self.dbg(stmt, BLUEBG, "SET DEFAULT", name)
 			if not name in drv:
-				drv[name] = [ ("default_%d" % i, None) for i in range(n) ]
+				lineno = self.getLineNo(stmt)
+				drv[name] = [ ("l:%d$default_%d" % (lineno, i), None) for i in range(n) ]
 			mux_id = self.node_tag(stmt)
 			# Assign nodes have a simple synthesis output
 			drv[name][pos] = (mux_id, stmt.syn.q)
@@ -877,15 +873,15 @@ Used for separation of common functionality of visitor classes"""
 				ret0, ret1 = True, True
 
 				if other:
-#					self.dbg(stmt, REDBG, "IMPLICIT_WARNING", \
-#						"(other) missing assignments, assuming defaults for %s" % name)
+					self.dbg(stmt, REDBG, "IMPLICIT_WARNING", \
+						"(other) missing assignments, assuming defaults for %s" % name)
 					ret0 = self.assign_default(name, other, defaults)
 					if not ret0:
 						self.dbg(stmt, REDBG, "APPEND OPEN OTHER", "%s" % name)
 
 				if default:
-#					self.dbg(stmt, REDBG, "IMPLICIT_WARNING", \
-#						"(default) missing assignments, assuming defaults %s" % name)
+					self.dbg(stmt, REDBG, "IMPLICIT_WARNING", \
+						"(default) missing assignments, assuming defaults %s" % name)
 					ret1 = self.assign_default(name, default, defaults)
 					if not ret1:
 						self.dbg(stmt, REDBG, "APPEND OPEN DEFAULT", "%s" % name)
@@ -990,6 +986,7 @@ Used for separation of common functionality of visitor classes"""
 
 		m = self.context
 		for dr_id, drivers in node.drivers.items():
+			self.dbg(node, REDBG, "MUX WALK DRV >>>", dr_id)
 			w = m.findWireByName(dr_id)
 			proto = w if w else self.variables[dr_id].q
 			size = proto.size()
@@ -1008,7 +1005,8 @@ Used for separation of common functionality of visitor classes"""
 				if not drv:
 				# We have no assignment, use default:
 					if not default:
-						name = self.genid(node, "%s_default" % dr_id)
+						lineno = self.getLineNo(node)
+						name = self.genid(node, "l:%d$%s_default" % (lineno, dr_id))
 						default = m.addSignal(name, size)
 					drv = default
 
