@@ -144,6 +144,10 @@ def run_conversion(ent, async_reset = False, wrapper = None, display = False, **
 		design.display_rtl(mname, fmt='dot')
 
 	name = ent.func.__name__
+	if "run_check" in kwargs and kwargs["run_check"] == True:
+		txt = design.run("check")
+		if txt.find("Warning") >= 0:
+			raise TypeError("Inconsitent In/Out mapping")
 	design.write_verilog(name, True)
 	if "test_syn" in kwargs and kwargs["test_syn"] == True:
 		design.test_synth()

@@ -35,6 +35,8 @@ from myhdl.conversion import yshelper as ys
 
 from myhdl._Signal import _Signal
 
+from myhdl.conversion.ysmodule_ng import INPUT, OUTPUT
+
 def map_interface(module, name, mapping, sig, otype = None):
 	"""Map signal to module interface."""
 	if otype == None:
@@ -60,6 +62,9 @@ def map_interface(module, name, mapping, sig, otype = None):
 		else:
 			w.setDirection(IN=True, OUT=False)
 		module.wires[name] = ys.YSignal(w)
+
+	print("SET IO %s to %s" % (name, otype))
+	module.iomap[name] = OUTPUT if otype else INPUT
 
 def map_port(module, unit, mapping, identifier, sig, otype = None):
 	"""Maps a signal from the parenting `module` to the ports of a
@@ -137,6 +142,18 @@ class BulkSignal(_BulkSignalBase):
 				i.read = True
 			ys.convert_wires(m, c, i, name, True)
 
+def signal_output_type(implementation, sig):
+	src = sig._source
+	is_out = False
+	if src:
+		# If it's us driving the pin, we're an OUT,
+		# unless we're a shadow.
+		if src == implementation:
+			if not isinstance(sig, _ShadowSignal):
+				is_out = sig._driven
+		src = src.name
+	return is_out, src
+
 class AutoSynthesisObject(SynthesisObject):
 	def __init__(self, identifier, typename, args, kwargs, argnames, \
 		mapping = None):
@@ -196,6 +213,7 @@ it sets the ports of the unit according to the interface signal types."""
 
 		module.fixup_ports() # Important
 
+
 	def blackbox(self, module, interface):
 		"Creates the black box interface for the stub"
 		args = self.args
@@ -207,7 +225,8 @@ it sets the ports of the unit according to the interface signal types."""
 				n, p = a
 				if p.kind == p.POSITIONAL_OR_KEYWORD:
 					sig = args[i]
-
+					otype = interface.output_type(sig, n)
+					module.iomap[n] = [otype, sig]
 					if isinstance(sig, _Signal):
 						map_interface(module, n, self.mapping, sig)
 					elif isinstance(sig, BulkSignal):
@@ -220,6 +239,8 @@ it sets the ports of the unit according to the interface signal types."""
 				n, p = a
 				if p.kind == p.POSITIONAL_OR_KEYWORD:
 					sig = args[i]
+					otype = interface.output_type(sig, n)
+					module.iomap[n] = [otype, sig]
 					module.collectArg(n, sig, True, True)
 
 		l = self.kwargs.keys()

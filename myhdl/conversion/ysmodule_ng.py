@@ -13,6 +13,8 @@ from .ysdebug import *
 
 from .synmapper import *
 
+UNDEFINED, INPUT, OUTPUT, INOUT, HIGHZ, PULLUP, PULLDOWN = range(7)
+
 
 def bitfield(n):
 	l = [ys.State(int(digit)) for digit in bin(n)[2:]]
@@ -119,6 +121,7 @@ def class_key(inst):
 
 class Wire:
 	"Tight wire wrapper"
+
 	def __init__(self, wire):
 		self.wire = wire
 
@@ -192,6 +195,10 @@ class Cell:
 			port = ConstSignal(port, 32)
 		elif isinstance(port, bool):
 			port = ConstSignal(int(port), 1)
+
+		if port.is_wire():
+			w = port.as_wire()
+
 		self.cell.setPort(PID(name), port)
 
 	def setParam(self, name, c):
@@ -222,6 +229,18 @@ class BBInterface:
 	def getOutputs(self):
 		"This is a hack for now, as we support one output per assignment only"
 		return [ self.main_out ]
+
+	def output_type(self, sig, name):
+		"Determine if we are an output or input"
+		if isinstance(sig, _Signal):
+			if sig._source and sig._source.module == self.module:
+				otype = OUTPUT
+			else:
+				otype = INPUT
+		else:
+			otype = INPUT
+
+		return otype
 
 	def addConst(self, val, len = 32):
 		if isinstance(val, int):
@@ -255,6 +274,9 @@ class BBInterface:
 				self.main_out = sigspec # Record last assigned output
 
 			self.interface[sigid] = ( sigspec, out )
+
+		otype = OUTPUT if out else INPUT
+		m.iomap[sigid] = [otype, sig]
 			
 		return sigspec
 
@@ -273,7 +295,6 @@ class BBInterface:
 
 			s, direction = i
 			sig = m.findWireByName(n, True)
-			w = s.as_wire()
 			# Reversed!
 			if direction == 0:
 				m.connect(s, sig)
@@ -336,8 +357,8 @@ class Module:
 		self.memories = {}
 		self.arrays = {}
 		self.inferred_memories = {}  # Maybe temporary: Track inferred memories
+		self.iomap = {}
 		self.guard = {}
-		self.user = [] # Module users
 		self.implementation = implementation
 		self.array_limit = 1024
 
@@ -457,6 +478,8 @@ class Module:
 
 	def addSignal(self, name, n, public = False):
 		w = self.addWire(name, n, public)
+		w.port_input = False
+		w.port_output = False
 		return ys.SigSpec(w.get())
 
 	def addMux(self, *args):
@@ -490,7 +513,6 @@ class Module:
 			raise KeyError("Wire `%s` not found" % identifier)
 		return w
 
-
 	def findWire(self, sig, reserved = False):
 		# TODO: Simplify, once elegant handling found
 			
@@ -502,7 +524,6 @@ class Module:
 			print(REDBG + \
 				"UNDEFINED/UNUSED wire, localname: %s, origin: %s" % (a._name, a._id) + OFF)
 			raise KeyError("Local signal not found")
-
 
 		return elem
 
@@ -521,21 +542,21 @@ class Module:
 			elem = None
 
 		return elem
-	
-	def signal_output_type(self, sig):
-		src = sig._source
-		is_out = False
-		if src:
-			# If it's us driving the pin, we're an OUT,
-			# unless we're a shadow.
-			if src == self.implementation:
-				if isinstance(sig, _ShadowSignal):
-					print("Notice: ShadowSignal %s never an output" % sig._name)
-				else:
-					is_out = sig._driven
-			src = src.name
 
-		return is_out, src
+	
+	def signal_output_type(self, name):
+#		src = sig._source
+#		is_out = False
+#		if src:
+#			# If it's us driving the pin, we're an OUT,
+#			# unless we're a shadow.
+#			if src == self.implementation:
+#				if not isinstance(sig, _ShadowSignal):
+#					is_out = sig._driven
+#			src = src.name
+#		return is_out, src
+
+		return self.iomap[name]
 
 	def collectArg(self, name, arg, is_port = False, force_wire = False):
 		d = self.wires
@@ -552,25 +573,31 @@ class Module:
 			s = len(arg)
 			w = self.addWire(name, s, is_port)
 			sig = YSignal(w)
-			is_out, src = self.signal_output_type(arg)
+			otype, src = self.signal_output_type(name)
 			# TODO: Clock signal could be flagged for debugging purposes
 			# Currently, it tends to be regarded as 'floating'
-			if is_out:
+			#if is_port:
+			#	print("PORT SIGNAL %s" % name)
+
+			if otype == OUTPUT:
 				self.debugmsg("\tWire OUT (%s) `%s`, id: `%s`, driver: %s" % \
 					(arg._driven, name, identifier, src), col = BLUEBG)
 				w.setDirection(IN=False, OUT=True)
-				# If we need to create a register, replace this wire
+				# NO LONGER NEEDED:
 #				if arg._driven == "reg":	
 #					buf = sig
 #					w = self.addWire(name + "_reg", s)
 #					sig = YSignal(w)
 #					self.connect(buf, sig)
 
-			elif arg._read:
+			elif otype == INPUT:
 				self.debugmsg("\tWire IN `%s`, id: `%s`, origin: %s" % (name, identifier, src), col = BLUEBG)
 				w.setDirection(IN=True, OUT=False)
+			elif otype == INOUT:
+				self.debugmsg("\tWire INOUT %s, id: %s" % (name, identifier), col = BLUEBG)
+				w.setDirection(IN=True, OUT=True)
 			else:
-				self.debugmsg("\tWire FLOATING %s, id: %s" % (name, identifier), col = BLUEBG)
+				self.debugmsg("\tWire NET %s, id: %s" % (name, identifier), col = BLUEBG)
 				# FIXME
 				# For now, we allocate this port as a dummy, anyway
 				# Also note: clk ports are not properly marked as 'read'
@@ -588,7 +615,7 @@ class Module:
 					t = arg.bit_length()
 					s = t if t > 0 else 1
 				w = self.addWire(name, s, True)
-				w.get().port_input = True
+				w.setDirection(IN=True, OUT=False)
 				d[name] = YSignal(w)
 			else:
 				d[name] = ConstSignal(arg)
@@ -596,7 +623,7 @@ class Module:
 			# print("Const signal Wire IN %s" % (name))
 			s = len(arg)
 			w = self.addWire(name, s, True)
-			w.get().port_input = True
+			w.setDirection(IN=True, OUT=False)
 			d[name] = ConstSignal(arg)
 		elif isinstance(arg, EnumType):
 			# print("\tENUM %s" % arg)
@@ -638,11 +665,54 @@ class Module:
 		self.wires[name] = shadow_sig
 
 	def dump_wires(self):
+		print(REDBG + "=== WIRE DUMP ===" + OFF)
 		for n, i in self.wireid.items():
-			print("WIRE ID '%s' : %s" % (n, i))
-			
-		for n, i in self.wires.items():
-			print("WIRE '%s'" % n)
+			w = self.wires[i]
+			if w.is_wire():
+				t = w.as_wire()
+				pi, po = t.port_input, t.port_output
+
+				print("WIRE '%s' : \t<%s> IN: %s OUT: %s" % (n, i, pi, po))
+			else:
+				print("CONST '%s' : \t<%s>" % (n, i))
+		print(REDBG + "=================" + OFF)
+	
+	def _gather_io(self, instance, args, l):
+		sigs = instance.sigdict
+
+		def sig_otype(iomap, arg, name, inputs, outputs):
+
+			if isinstance(arg, _Signal):
+				if name in inputs:
+					if name in outputs:
+						otype = INOUT
+					else:
+						otype = INPUT
+				elif name in outputs:
+					otype = OUTPUT
+				else:
+					self.debugmsg("Undetermined I/O state of %s" % name)
+					otype = HIGHZ
+				iomap[name] = [otype, arg]
+
+			elif hasattr(arg, '__dict__'):
+				for mn, member in arg.__dict__.items():
+					identifier = "%s_%s" % (name, mn)
+					sig_otype(iomap, member, identifier, inputs, outputs)
+
+		inputs, outputs = instance.get_io()
+
+		for i, a in enumerate(args):
+			name, param = a
+			if not name in self.iomap:
+				if name in sigs:
+					sig = sigs[name]
+					sig_otype(self.iomap, sig, name, inputs, outputs)
+				elif i < l:
+					arg = instance.obj.args[i]
+					sig_otype(self.iomap, arg, name, inputs, outputs)
+			else:
+				self.debugmsg("GATHER_IO: skip %s" % name)
 
 	def collectWires(self, instance, args):
 		def insert_wire(wtype, d, n, s):
@@ -657,7 +727,10 @@ class Module:
 			else:
 				self.debugmsg("%s Wire '%s' id:`%s` init: %d" % (wtype, n, s._id, s._init), col = BLUEBG)
 				l = get_size(s)
-				w = self.addSignal(n + "_w", l)
+				w = self.addSignal(PID(n + "::wire"), l)
+				t = w.as_wire()
+				t.port_input = False
+				t.port_output = False
 				d[n] = w
 				self.wireid[s._id] = n
 				return w
@@ -667,8 +740,10 @@ class Module:
 		blk = instance.obj
 		sigs = instance.sigdict
 
-
 		l = len(blk.args)
+
+		self._gather_io(instance, args, l)
+
 		# print("# of block arguments:", l)
 
 		remaining = instance.symdict
@@ -684,9 +759,8 @@ class Module:
 				arg = blk.args[i]
 				self.collectArg(name, arg, is_port)
 			else:
-				print("SKIP default arg %s" % name)
+				self.debugmsg("SKIP default arg %s" % name)
 
-	
 		# Collect remaining signals
 		shadow_syms = {}
 		for n, s in sigs.items():
@@ -697,8 +771,6 @@ class Module:
 					w = insert_wire("INTERNAL", d, n, s)
 					initvalues[n] = s._init
 		
-		# z = input("HIT RETURN")
-
 		
 		# Collect local Class signals:
 		for n, el in remaining.items():
@@ -770,8 +842,6 @@ class Module:
 		for n, s in shadow_syms.items():
 			self.collectAliases(s, n)
 	
-		self.module.fixup_ports()
-
 	def collectMemories(self, instance):
 		for m in instance.memdict.items():
 			print("SIGNAL ARRAY '%s'" % m[0])
@@ -803,9 +873,11 @@ class Module:
 		sm.q = outs[0]
 		return sm
 
-	def finish(self, design):
-		self.module.memories = self.cache_mem
-		self.module.avail_parameters = self.avail_parameters
-		mname = self.name.str()
-		# self.module.check()
-
+	def finish(self, design, fixup = True):
+		m = self.module
+		# Fix up for I/O sanity after redefinition:
+		# print(REDBG + "FIXUP PORTS FOR %s" % m.name + OFF)
+		if fixup:
+			m.fixup_ports()
+		m.memories = self.cache_mem
+		m.avail_parameters = self.avail_parameters

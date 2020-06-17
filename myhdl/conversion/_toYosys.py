@@ -765,7 +765,7 @@ class _ConvertAlwaysDecoVisitor(_ConvertVisitor):
 				if gsig:
 					l = gsig.size()
 					self.dbg(node, BLUEBG, "FLIPFLOP_REGISTER", "%s" % name)
-					sig_ff = m.addSignal(PID(name + "_ff"), l)
+					sig_ff = m.addSignal(ID(name + "_ff"), l)
 					m.addDff(self.genid(node, name), clk, sig[0], sig_ff, clkpol)
 					m.connect(gsig, sig_ff)
 				else:
@@ -800,7 +800,7 @@ class _ConvertAlwaysDecoVisitor(_ConvertVisitor):
 			else:
 				self.raiseError(clknode, "Invalid clk type")
 
-			self.dbg(node, VIOBG, "PROCESS", "%s():%s Single edge:" % (self.tree.name, clk._id))
+			self.dbg(node, VIOBG, "PROCESS", "%s():%s" % (self.tree.name, clk._id))
 			self.clk = clk
 			self.clkpol = clkpol
 			# print(clk)
@@ -845,7 +845,7 @@ class _ConvertAlwaysSeqVisitor(_ConvertVisitor):
 				gsig = m.findWireByName(name)
 				if gsig:
 					l = gsig.size()
-					sig_ff = m.addSignal(PID(name + "_aff"), l)
+					sig_ff = m.addSignal(ID(name + "_aff"), l)
 					reset_val = Const(m.defaults[name], l) # Value when in reset
 					arst = m.getCorrespondingWire(reset)
 					m.addAdff(self.genid(node, name), clk, arst, sig[0], sig_ff, reset_val.get(), \
@@ -945,18 +945,46 @@ def collect_generators(instance, absnames):
 	return genlist
 
 		
-def infer_handle_interface(design, instance):
-	blk = instance.obj
-	infer_interface(blk)
+def infer_handle_interface(design, instance, propagate_io_properties = False):
+	instance.infer_interface()
 	# Add module with implementation (not instance) name
 	# The name is a unique key mangled from the interface
-	key = create_key(blk)
+	key = instance.create_key()
 	m = design.addModule(key, instance)
+	instance.module = m
+	parameters = inspect.signature(instance.obj.func).parameters.items()
 
-	argnames = inspect.signature(blk.func).parameters.items()
+	# Ugly function to propagate I/O properties of signals that are
+	# wired through (pure ports):
+	if propagate_io_properties:
+		for inst in instance.instances:
+			inst.infer_interface()
 
-	m.collectWires(instance, argnames)
+			im = inst.module
 
+			lookup = {}
+			
+			for p in parameters:
+				name, param = p
+				if name in instance.obj.argdict:
+					s = instance.obj.argdict[name]
+					lookup[s._id] = name
+
+			if im:
+				for n, i in im.iomap.items():
+					otype, s = i
+					if s._id in lookup:
+						if otype == 2:
+							inout = "-->"
+						else:
+							inout = "<--"
+						pn = lookup[s._id]
+						if pn in m.iomap:
+							m.iomap[pn][0] = otype
+						else:
+							m.iomap[pn] = [ otype, s ]
+
+	m.collectWires(instance, parameters)
 	return m
 
 def infer_rtl(h, instance, design):
@@ -978,7 +1006,9 @@ def infer_rtl(h, instance, design):
 		m.finish(design)
 
 def convert_rtl(h, instance, design):
-	m = infer_handle_interface(design, instance)
+				
+
+	m = infer_handle_interface(design, instance, True)
 
 	m.collectMemories(instance)
 
@@ -1001,20 +1031,22 @@ def convert_rtl(h, instance, design):
 		v = Visitor(m, tree)
 		v.visit(tree)
 
+
+def wireup_rtl(h, instance, design, fixup = True):
+	m = instance.module
 	# Create submodule instances as cells:
 	print(76 * '=')
-	for name, blkinst in instance.instances:
-		key = create_key(blkinst)
-		infer_interface(blkinst)
+	for inst in instance.instances:
+		key = inst.create_key()
 		print("++++++++  %s  ++++++++" % key)
 
-		c = m.addCell(name, key)
+		# Reference to instanced module:
+		im = inst.module
 
-		inst_decl = h.instdict[name]
+		c = m.addCell(inst.name, key)
+		d = inst.obj.argdict.copy()
 
-		d = blkinst.argdict.copy()
-
-		for n, i in inst_decl.wiremap.items():
+		for n, i in inst.wiremap.items():
 			# print(BLUEBG + ">> %s" % (n) + OFF)
 			sig, _ = i
 			if sig._used:
@@ -1023,11 +1055,12 @@ def convert_rtl(h, instance, design):
 					d.pop(n) # Make sure to pop here, it could fail
 					c.setPort(n, w)
 				except KeyError:
-					print("unconnected (internal) wire %s" % n)
+					pass
+					# print("non-port (internal) wire %s" % n)
 			else:
 				print(REDBG + "Unused signal: %s" % sig._name + OFF)
 
-		#m.dump_wires()
+		# print("------ REMAINING ------")
 
 		for n, a in d.items():
 			if a._used:
@@ -1036,7 +1069,9 @@ def convert_rtl(h, instance, design):
 			else:
 				print(REDBG + "Unused port: %s" % sig._name + OFF)
 
-	m.finish(design) # Hack
+	if ENABLE_DEBUG:
+		m.dump_wires()
+	m.finish(design, fixup) # Hack
 	print("DONE instancing submodules")
 
 def convert_hierarchy(h, func, design, trace = False):
@@ -1048,13 +1083,14 @@ def convert_hierarchy(h, func, design, trace = False):
 			print(REDBG + "Instance %s not found" % inst.name + OFF)
 		inst.analyze_signals()
 
-	for inst in h.hierarchy:
+	# Walk from bottom level to top level
+	for inst in sorted(h.hierarchy):
 		# print(GREEN + "========================================================" + OFF)
 		l = []
 		block_instances = []
 		for nm, elem in inst.subs:
 			if isinstance(elem, (_Block, _BlackBox)):
-				block_instances.append((nm, elem))
+				block_instances.append(h.instdict[nm])
 			else:
 				l.append(elem)
 
@@ -1071,6 +1107,8 @@ def convert_hierarchy(h, func, design, trace = False):
 				infer_rtl(h, inst, design)
 			else:
 				convert_rtl(h, inst, design)
+				wireup_rtl(h, inst, design)
+
 
 	top = h.hierarchy[0]
 

@@ -230,6 +230,8 @@ def wrapper(clk, ce, reset, rval, out):
 
 @block
 def nested_hier(clk, ce, reset, dout, debug, DWIDTH = 8):
+	"""This one may simulate correctly, but create warnings
+in synthesis check due to incorrect in/out mapping"""
 	a, b = [ Signal(modbv(0)[DWIDTH:]) for i in range(2) ]
 
 	inst_lfsr2 = wrapper(clk, ce, reset, 2, a)
@@ -243,10 +245,10 @@ def nested_hier(clk, ce, reset, dout, debug, DWIDTH = 8):
 	return instances()
 
 
-UUT_LIST = [ lfsr8_multi, nested_hier, sig_classes ]
+UUT_LIST = [ lfsr8_multi, sig_classes ]
 UUT_LIST += [ sig_classes_hier, sig_classes_hier_namespace ]
-UUT_LIST += [ unit_array, sig_classes1 ]
-
+UUT_LIST += [ sig_classes1 ]
+UUT_LIST += [ nested_hier, unit_array  ]
 # Unresolved cases
 UUT_LIST_UNRESOLVED = [ ]
 
@@ -254,7 +256,9 @@ UUT_LIST_UNRESOLVED = [ ]
 @pytest.mark.parametrize("uut", UUT_LIST)
 def test_mapped_uut(uut):
 	arst = False
-	run_conversion(uut, arst, None, False) # No wrapper, no display
+	# No wrapper, no display
+	# 'check' command can crash in current yosys versions. Disabled for now
+	run_conversion(uut, arst, None, False, run_check = False)
 	run_tb(tb_unit(uut, mapped_uut, arst), 20000)
 
 @pytest.mark.xfail

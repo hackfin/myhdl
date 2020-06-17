@@ -7,6 +7,7 @@ import ast
 import inspect
 import myhdl
 import os
+import io
 
 from myhdl import ConversionError
 
@@ -73,6 +74,7 @@ class Design:
 	def __init__(self, name="top"):
 		self.design = ys.Design()
 		self.name = name
+		self.modules = {}
 
 	def get(self):
 		return self.design
@@ -85,7 +87,9 @@ class Design:
 		else:
 			n = ID(name)
 		m = self.design.addModule(n)
-		return Module(m, implementation)
+		m = Module(m, implementation)
+		self.modules[name] = m
+		return m
 
 	def set_top_module(self, top):
 		key = create_key(top.obj)
@@ -94,9 +98,15 @@ class Design:
 	def top_module(self):
 		return Module(self.design.top_module(), None)
 
-	def run(self, cmd):
+	def run(self, cmd, silent = True):
 		"Careful. This function can exit without warning"
+		capture = io.StringIO()
+		ys.log_to_stream(capture)
 		ys.run_pass(cmd, self.design)
+		ys.log_pop()
+		if not silent:
+			print(capture.getvalue())
+		return capture.getvalue()
 
 	def display_rtl(self, selection = "", fmt = None, full = False):
 		"Display first stage RTL"
@@ -300,15 +310,7 @@ class Instance:
  may be according to the order of sub module analysys (avoid this by
  using OrderedDict in future)
 
-
- Now there's a catch: Signals become registered, when they are used.
- So from the above cases, a signal might be left unregistered in the
- parent level when it is not used in the latter.
-
- Therefore, the signal gets named/registered upon creation of
- a child instance. See also `._source` member below.
-
- Assume case 2.b:
+  Assume case 2.b:
  - Signal declared in parent: 'port_a', but not driven/read in parent
  - port_a driven by child module B, read by child module A
  - Signal port_a passed as (implicit output) parameter `b_out` to B
@@ -317,22 +319,15 @@ class Instance:
  When seen first (driven) in B, it's registered as local name `b_out`.
  When seen first in A, it takes the name `a_in`.
 
-
 To preserve hierarchy, a .wiremap is maintained. See analyze_signals().
 
-  Input/Output port handling
-  ===========================
-
-  Port Signals are driven in two variants by a module:
-  - 'reg': A register is instanced 
-  - 'wire': A simple output is driven only
-
-  To resolve in/out per module, we need to keep track of the driver
-  origin. This introduces a new `._source` member for a _Signal type.
+Nested hierarchies have to be fixed by a final pass, because the
+module I/O properties might not be fully determined at the time the interface
+is inferred.
 
 """
 
-	__slots__ = ['level', 'obj', 'subs', 'sigdict', 'symdict', 'memdict', 'wiremap', 'name', 'genlist', 'instances', 'cell', 'msg']
+	__slots__ = ['level', 'obj', 'subs', 'sigdict', 'symdict', 'memdict', 'wiremap', 'name', 'genlist', 'instances', 'cell', 'module', 'msg']
 
 	def __init__(self, level, obj, subs, debug = False):
 		self.level = level
@@ -344,6 +339,7 @@ To preserve hierarchy, a .wiremap is maintained. See analyze_signals().
 		self.wiremap = {}
 		self.name = None
 		self.cell = False
+		self.module = None
 
 		def dummy_msg(*args, **kwargs):
 			pass
@@ -352,6 +348,9 @@ To preserve hierarchy, a .wiremap is maintained. See analyze_signals().
 			self.msg = print
 		else:
 			self.msg = dummy_msg
+
+	def __lt__(self, other):
+		return self.level > other.level
 
 	def __repr__(self):
 		return "< Instance %s >" % self.name
@@ -369,15 +368,14 @@ To preserve hierarchy, a .wiremap is maintained. See analyze_signals().
 				print("OTHER %s (type %s)" % (n, type(i).__name__))
 
 	def analyze_signals(self):
-		"""Analyze signals. We are walking the flattened hierarchy from the top,
+		"""Analyze signals of an instance. We may be walking the hierarchy in any direction,
 thus wired signals are getting their ._name on the fly. Note: Bulk signals are not analyzed,
-as they appear not in the sigdict."""
+as they appear not in the sigdict. Note that I/O characteristics are not yet determined."""
 		msg = self.msg
 
 		msg("===== Analyze signals for %s =====" % self)
 		# sigs = []
 		# sigarrays = []
-
 
 		# namedict = dict(chain(sigdict.items(), memdict.items()))
 		namedict = {}
@@ -417,6 +415,28 @@ as they appear not in the sigdict."""
 				m.name = _makeName(n, [], namedict)
 
 			# sigarrays.append(m)
+
+	def infer_interface(self):
+		blk = self.obj
+		infer_interface(blk)
+
+	def get_io(self):
+		inputs = set()
+		outputs = set()
+		for t in self.genlist:
+			inputs.update(t.inputs)
+			outputs.update(t.outputs)
+
+		return inputs, outputs
+
+	def create_key(self):
+		"Create a unique key for a specific instance"
+		blk = self.obj
+		a = blk.func.__name__
+		for i in blk.args:
+			a = append_sig(i, a)
+
+		return a
 
 def create_key(inst):
 	"Create a unique key for a specific instance"
@@ -986,7 +1006,7 @@ Used for separation of common functionality of visitor classes"""
 
 		m = self.context
 		for dr_id, drivers in node.drivers.items():
-			self.dbg(node, REDBG, "MUX WALK DRV >>>", dr_id)
+			self.dbg(node, GREEN, "MUX WALK DRV >>>", dr_id)
 			w = m.findWireByName(dr_id)
 			proto = w if w else self.variables[dr_id].q
 			size = proto.size()
