@@ -338,7 +338,7 @@ def test_blackbox_ext():
 	design.import_verilog("user_xor.v")
  
 	design.write_verilog("inst_ext_blackbox", True)
-	design.display_rtl("$ext_xor_8_8_8", fmt='ps')
+	design.display_rtl("ext_xor_8_8_8", fmt='ps')
 	design.write_ilang("ext_xor")
  
 	run_tb(tb_unit(UNIT, mapped_uut, arst), 20000)

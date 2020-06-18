@@ -169,7 +169,102 @@ def complex_select(clk, ce, reset, dout, debug):
 
 	return instances()
 
+
+@block
+def no_default(clk, ce, reset, dout, debug):
+	"MUX case with missing default statement"
+	counter = Signal(modbv(0)[8:])
+	@always_seq(clk.posedge, reset)
+	def worker():
+		if ce:
+			counter.next = counter + 1
+
+	@always_comb
+	def assign():
+		if counter == 0:
+			dout.next = 20
+			debug.next = False
+		elif counter <= 15:
+			dout.next = 21
+			debug.next = True
+		# Missing else:
+
+	return instances()
+
+@block
+def var_mux(clk, ce, reset, dout, debug):
+	"Case with wrong bit width initialization"
+	o = Signal(modbv()[8:])
+	inst_lfsr1 = lfsr8(clk, 1, reset, 0, o)
+
+	@always_seq(clk.posedge, reset)
+	def worker():
+		v = 6
+		if o == 33:
+			v = 4
+		else:
+			v = 0xff
+
+		dout.next = v
+
+	return instances()
+
+@block
+def var_pmux(clk, ce, reset, dout, debug):
+
+	o = Signal(modbv()[8:])
+	inst_lfsr1 = lfsr8(clk, ce, reset, 0, o)
+
+	@always_seq(clk.posedge, reset)
+	def worker():
+
+		v = 0xff
+
+		if o == 3:
+			if o[1]:
+				if ce:
+					v = 1
+			elif o[0]:
+				if ce:
+					v = 14
+		elif o == 1:
+			v = 2
+		else:
+			v = 0
+
+		dout.next = v
+		debug.next = o[2]
+
+	return instances()
+
+@block
+def pitfall_redef(clk, ce, reset, dout, debug):
+	"""Do we allow this?"""
+	state = Signal(intbv(0)[5:])
+
+	@always_seq(clk.posedge, reset)
+	def worker():
+
+		v = 0xff
+
+		if state == 2:
+			dout.next = 1
+
+		if state == 0:
+			state.next = 1
+		elif state == 1:
+			pass
+		else:
+			debug.next = ce
+			state.next = 0
+			dout.next = v
+
+	return instances()
+
+
 UUT_LIST = [ defaults1, defaults2, defaults3, complex_select ]
+
+UUT_LIST += [ no_default ]
 
 
 @pytest.mark.parametrize("uut", UUT_LIST)
@@ -177,4 +272,14 @@ def test_mux(uut):
 	arst = False
 	run_conversion(uut, arst, None, False) # No wrapper, no display
 	run_tb(tb_unit(uut, mapped_uut, arst), 20000)
+
+
+UUT_BROKEN_LIST = [ var_mux, var_pmux, pitfall_redef  ]
+
+@pytest.mark.xfail
+@pytest.mark.parametrize("uut", UUT_BROKEN_LIST)
+def test_mux_broken(uut):
+	arst = False
+	run_conversion(uut, arst, None, False) # No wrapper, no display
+	run_tb(tb_unit(uut, mapped_uut, arst), 200)
 

@@ -35,10 +35,11 @@ from myhdl.conversion import yshelper as ys
 
 from myhdl._Signal import _Signal
 
+
 def map_interface(module, name, mapping, sig, otype = None):
 	"""Map signal to module interface."""
 	if otype == None:
-		otype, _ = module.signal_output_type(sig)
+		otype, _ = signal_output_type(module.implementation, sig)
 
 	l = len(mapping)
 
@@ -61,12 +62,14 @@ def map_interface(module, name, mapping, sig, otype = None):
 			w.setDirection(IN=True, OUT=False)
 		module.wires[name] = ys.YSignal(w)
 
+	module.iomap_set_porttype(name, sig, otype)
+
 def map_port(module, unit, mapping, identifier, sig, otype = None):
 	"""Maps a signal from the parenting `module` to the ports of a
 black box entity (a.ka. cell `unit`) using the given
 mapping."""
 	if otype == None:
-		otype, src = module.signal_output_type(sig)
+		otype, src = signal_output_type(module.implementation, sig)
 		if not src:
 			print("Notice: %s has no source" % identifier)
 	# If we're an input, simply extract signal
@@ -137,6 +140,18 @@ class BulkSignal(_BulkSignalBase):
 				i.read = True
 			ys.convert_wires(m, c, i, name, True)
 
+def signal_output_type(implementation, sig):
+	src = sig._source
+	is_out = False
+	if src:
+		# If it's us driving the pin, we're an OUT,
+		# unless we're a shadow.
+		if src == implementation:
+			if not isinstance(sig, _ShadowSignal):
+				is_out = sig._driven
+		src = src.name
+	return is_out, src
+
 class AutoSynthesisObject(SynthesisObject):
 	def __init__(self, identifier, typename, args, kwargs, argnames, \
 		mapping = None):
@@ -157,41 +172,46 @@ it sets the ports of the unit according to the interface signal types."""
 
 		if self.mapping:
 			print("Custom mapping black box %s" % self.name)
+			l = len(args)
 			for i, a in enumerate(self.argnames):
 				n, p = a
 				if p.kind == p.POSITIONAL_OR_KEYWORD:
-					sig = args[i]
-					if isinstance(sig, _Signal):
-						m = self.mapping[n]
-						map_port(module, unit, m, n, sig)
-					elif isinstance(sig, BulkSignal):
-						sig.map_ports(module, unit)
-					elif isinstance(sig, (int, bool)):
-						w = ys.ConstSignal(sig)
-						unit.setPort(n, w)
-					else:
-						raise TypeError("Unsupported arg type %s" % type(sig))
+					if i < l:
+						sig = args[i]
+						if isinstance(sig, _Signal):
+							m = self.mapping[n]
+							map_port(module, unit, m, n, sig)
+						elif isinstance(sig, BulkSignal):
+							sig.map_ports(module, unit)
+						elif isinstance(sig, (int, bool)):
+							w = ys.ConstSignal(sig)
+							unit.setPort(n, w)
+						else:
+							raise TypeError("Unsupported arg type %s" % type(sig))
 
 		else:
 			for i, a in enumerate(self.argnames):
 				n, p = a
+				l = len(args)
 				if p.kind == p.POSITIONAL_OR_KEYWORD:
-					sig = args[i]
-					if isinstance(sig, _Signal):
-						w = module.findWireByName(n)
-						if not w:
-							raise KeyError("Wire '%s' not found" % n)
-						unit.setPort(n, w)
-					elif isinstance(sig, BulkSignal):
-						sig.map_ports(module, unit)
-					elif isinstance(sig, (int, bool)):
-						w = ys.ConstSignal(sig)
-						unit.setPort(n, w)
-					else:
-						raise TypeError("Unsupported arg type %s" % type(sig))
+					if i < l:
+						sig = args[i]
+						if isinstance(sig, _Signal):
+							w = module.findWireByName(n)
+							if not w:
+								raise KeyError("Wire '%s' not found" % n)
+							unit.setPort(n, w)
+						elif isinstance(sig, BulkSignal):
+							sig.map_ports(module, unit)
+						elif isinstance(sig, (int, bool)):
+							w = ys.ConstSignal(sig)
+							unit.setPort(n, w)
+						else:
+							raise TypeError("Unsupported arg type %s" % type(sig))
 				
 		for pid, param in self.kwargs.items():
 			if param != None:
+				print("config param %s =" % pid, param)
 				unit.setParam(pid, param)
 
 		module.fixup_ports() # Important
@@ -202,28 +222,46 @@ it sets the ports of the unit according to the interface signal types."""
 		module.defaults = {}
 		module.makeblackbox()
 
+		default_param = {}
+
 		if self.mapping:
 			for i, a in enumerate(self.argnames):
 				n, p = a
+				l = len(args)
 				if p.kind == p.POSITIONAL_OR_KEYWORD:
-					sig = args[i]
-
-					if isinstance(sig, _Signal):
-						map_interface(module, n, self.mapping, sig)
-					elif isinstance(sig, BulkSignal):
-						sig.interface(module)
+					if i < l:
+						sig = args[i]
+						otype = interface.output_type(sig, n)
+						module.iomap_set_porttype(n, sig, otype)
+						if isinstance(sig, _Signal):
+							map_interface(module, n, self.mapping[n], sig)
+						elif isinstance(sig, BulkSignal):
+							sig.interface(module)
+						else:
+							raise TypeError("Unsupported argument type %s" % (type(sig)))
 					else:
-						raise TypeError("Unsupported argument type %s" % (type(sig)))
+						default_param[p.name] = p.default
 
 		else:
 			for i, a in enumerate(self.argnames):
 				n, p = a
+				l = len(args)
 				if p.kind == p.POSITIONAL_OR_KEYWORD:
-					sig = args[i]
-					module.collectArg(n, sig, True, True)
+					if i < l:
+						sig = args[i]
+						otype = interface.output_type(sig, n)
+						module.iomap_set_porttype(n, sig, otype)
+						module.collectArg(n, sig, True, True)
+					else:
+						# print("DEFAULT PARAM %s = %s" % (p.name, p.default))
+						default_param[p.name] = p.default
+
+				elif p.kind == p.VAR_KEYWORD:
+					print("KEYWORD VAR", p)
+
 
 		l = self.kwargs.keys()
-		module.avail_parameters = [ (ys.PID(i)) for i in l ]
+		module.avail_parameters = [ (ys.PID(n)) for n, _ in default_param.items() ]
 
 		module.fixup_ports() # Important
 
@@ -296,7 +334,10 @@ def insert_sig(d, prefix, sig):
 			ns = translate(name, sig)
 			d[name] = ns
 		elif sig._type == bool:
+			print("insert %s" % name)
 			d[name] = [(name, 1)]
+		else:
+			raise TypeError("Unsupported type", sig._type)
 	elif isinstance(sig, bool):
 		d[name] = [(name, 1)]
 	else:
@@ -305,11 +346,14 @@ def insert_sig(d, prefix, sig):
 def unroll_bulk(args, argnames):
 	"""Bulk class unroller. Unrolls all bit vectors of name V into a map
 	of V0, V1, .. into boolean signals each"""
-
 	mapping = {}
-	for i, n in enumerate(argnames):
-		sig = args[i]
-		name = n[0]
-		insert_sig(mapping, name, sig)
+	l = len(args)
+	for i, a in enumerate(argnames):
+		n, p = a
+		if i < l:
+			sig = args[i]
+			insert_sig(mapping, n, sig)
+		else:
+			print("UNROLL: SKIP ARG %s" % n, p)
 
 	return mapping

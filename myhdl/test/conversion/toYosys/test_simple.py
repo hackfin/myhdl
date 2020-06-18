@@ -389,26 +389,6 @@ def lfsr8_1(clk, ce, reset, dout, debug):
 
 	return instances()
 
-@block
-def fail_elif(clk, ce, reset, dout, debug):
-	"Failing MUX case with missing default statement. Must throw error."
-	counter = Signal(modbv(0)[8:])
-	@always_seq(clk.posedge, reset)
-	def worker():
-		if ce:
-			counter.next = counter + 1
-
-	@always_comb
-	def assign():
-		if counter == 0:
-			dout.next = 20
-			debug.next = False
-		elif counter <= 15:
-			dout.next = 21
-			debug.next = True
-		# Missing else:
-
-	return instances()
 
 @block
 def simple_logic_unused_pin(clk, a_in, b_in, y_out):
@@ -520,7 +500,7 @@ UUT_LIST = [ simple_expr, bool_ops, simple_reset_expr, proc_expr, process_variab
 
 UUT_LIST += [ simple_sr, simple_shift_right ]
 
-UUT_LIST += [ unused_pin, fail_elif ]
+UUT_LIST += [ unused_pin, ]
 
 UUT_UNRESOLVED_LIST = [ dynamic_slice, if_expr, assign_slice_legacy, assign_slice_new ]
 

@@ -46,7 +46,7 @@ _error.DecNrOfArgs = "decorator should have arguments"
 def _get_sigdict(sigs, symdict):
 	"""Lookup signals in caller namespace and return sigdict
 
-	Lookup signals in then namespace of a caller. This is used to add
+	Lookup signals in the namespace of a caller. This is used to add
 	signal arguments from an instantiator decorator to the instance.
 	0: this function
 	1: the instantiator decorator
@@ -68,8 +68,11 @@ def _get_sigdict(sigs, symdict):
 						sigdict[identifier] = s
 						found = True
 						break
+			elif isinstance(v, list):
+				# TMP hack: assume argument always being in some array
+				found = True
 		if not found:
-			raise SystemError("Could not retrieve symbol of signal argument #%d" % (i + 1))
+			raise ValueError("Could not retrieve symbol of signal '%s' argument #%d" % (s._name, i + 1))
 
 	return sigdict
 
