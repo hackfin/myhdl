@@ -1,6 +1,5 @@
 mangle = lambda p, a : "%s_%s" % (p, a)
 
-
 class _BulkSignalBase:
 	"""Preliminary bulk signal type
 Inside the blackbox environment, this is a non-nestable container
@@ -55,11 +54,13 @@ appear in the signal list.
 			if not otype:
 				s.read = True
 			s._source = impl
+			module.iomap_set_porttype(s._id, s, otype)
 			# First look up in module if signal was already instanced:
 			if not s._id in module.wireid:
+				print("collect <%s>" % n, s._id)
 				module.collectArg(s._id, s, public, True)
 			else:
-				print("Member %s already instanced" % n)
+				print("Member %s already instanced" % s._id)
 
 	def convert_wires(self):
 		raise SystemError("You must implement this function in your derived class")

@@ -79,10 +79,9 @@ class Design:
 	def get(self):
 		return self.design
 
-	def addModule(self, name, implementation, builtin = False):
-		b = "blackbox-" if builtin else ""
-		print(GREEN + "Adding %smodule with name:"  % b + OFF, name)
-		if builtin:
+	def addModule(self, name, implementation, public = False):
+		print(GREEN + "Adding module with name:"  + OFF, name)
+		if public:
 			n = PID(name)
 		else:
 			n = ID(name)
@@ -93,20 +92,29 @@ class Design:
 
 	def set_top_module(self, top):
 		key = create_key(top.obj)
-		ys.run_pass("hierarchy -top $%s" % key, self.design)
+		ys.run_pass("hierarchy -top \\%s" % key, self.design)
 
 	def top_module(self):
 		return Module(self.design.top_module(), None)
 
 	def run(self, cmd, silent = True):
 		"Careful. This function can exit without warning"
-		capture = io.StringIO()
-		ys.log_to_stream(capture)
-		ys.run_pass(cmd, self.design)
-		ys.log_pop()
 		if not silent:
-			print(capture.getvalue())
-		return capture.getvalue()
+			print("Note: Capturing currently broken")
+#		capture = io.StringIO()
+#		ys.log_to_stream(capture)
+		if isinstance(cmd, list):
+			for c in cmd:
+				ys.run_pass(c, self.design)
+		else:
+			ys.run_pass(cmd, self.design)
+#		ys.log_pop()
+#
+#		if not silent:
+#			print(capture.getvalue())
+#		else:
+#			return capture.getvalue()
+		
 
 	def display_rtl(self, selection = "", fmt = None, full = False):
 		"Display first stage RTL"
@@ -144,6 +152,7 @@ class Design:
 
 	def write_verilog(self, name, rename_default = False, rename_signals = True):
 		"Write verilog"
+		ys.run_pass("ls; check")
 		ys.run_pass("hierarchy -check")
 		if name == None:
 			name = "uut"

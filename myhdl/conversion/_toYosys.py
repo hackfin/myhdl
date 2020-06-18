@@ -950,7 +950,7 @@ def infer_handle_interface(design, instance, propagate_io_properties = False):
 	# Add module with implementation (not instance) name
 	# The name is a unique key mangled from the interface
 	key = instance.create_key()
-	m = design.addModule(key, instance)
+	m = design.addModule(key, instance, True)
 	instance.module = m
 	parameters = inspect.signature(instance.obj.func).parameters.items()
 
@@ -1038,12 +1038,12 @@ def wireup_rtl(h, instance, design, fixup = True):
 	print(76 * '=')
 	for inst in instance.instances:
 		key = inst.create_key()
-		print("++++++++  %s  ++++++++" % key)
+		print("++++++++ %s: %s  ++++++++" % (inst.name, key))
 
 		# Reference to instanced module:
 		im = inst.module
 
-		c = m.addCell(inst.name, key)
+		c = m.addCell(inst.name, key, True)
 		d = inst.obj.argdict.copy()
 
 		for n, i in inst.wiremap.items():

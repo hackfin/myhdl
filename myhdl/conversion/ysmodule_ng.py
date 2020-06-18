@@ -543,19 +543,11 @@ class Module:
 
 		return elem
 
+	def iomap_set_porttype(self, n, sig, is_out):
+		otype = OUTPUT if is_out else INPUT
+		self.iomap[n] = [otype, sig]
 	
 	def signal_output_type(self, name):
-#		src = sig._source
-#		is_out = False
-#		if src:
-#			# If it's us driving the pin, we're an OUT,
-#			# unless we're a shadow.
-#			if src == self.implementation:
-#				if not isinstance(sig, _ShadowSignal):
-#					is_out = sig._driven
-#			src = src.name
-#		return is_out, src
-
 		return self.iomap[name]
 
 	def collectArg(self, name, arg, is_port = False, force_wire = False):

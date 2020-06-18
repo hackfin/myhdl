@@ -136,14 +136,15 @@ UUT_LIST += [ (test_intbv_signed.SlicedSigned, self_containing_tb )]
 
 @pytest.mark.parametrize("uut,tb", UUT_LIST )
 def test_intbv(uut, tb):
-	name = uut.func.__name__
+	name = '$' + uut.func.__name__
 	design = yshelper.Design(name)
 	clk = Signal(bool())
 	debug = Signal(bool())
 	inst_tb = tb(uut, clk, debug)
 	inst_tb.convert("yosys_module", design, name=name, trace=False)
-	design.write_verilog(name, True, False)
-	design.display_rtl("$" + name, fmt='dot')
+	design.finalize(name)
+	# design.write_verilog(name, True, False)
+	design.display_rtl(name, fmt='dot')
 	wrapper = SelfContainingTb(tb, uut)
 	run_tb(cosim_stim(wrapper), 2000)
 
@@ -177,14 +178,14 @@ UUT_LIST_INST_X = []
 @pytest.mark.xfail
 @pytest.mark.parametrize("uut,tb", UUT_LIST_INST_X )
 def test_unsupported_sequential(uut, tb):
-	name = uut.func.__name__
+	name = '$' + uut.func.__name__
 	design = yshelper.Design(name)
 	clk = Signal(bool())
 	debug = Signal(bool())
 	inst_tb = tb(uut, clk, debug)
 	inst_tb.convert("yosys_module", design, name=name, trace=False)
 	design.write_verilog(name, True, False)
-	design.display_rtl("$" + name, fmt='dot')
+	design.display_rtl(name, fmt='dot')
 	wrapper = SelfContainingTb(tb, uut)
 	run_tb(cosim_stim(wrapper), 2000)
 
