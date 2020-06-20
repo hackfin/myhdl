@@ -539,7 +539,11 @@ class Module:
 
 		return elem
 
-	def iomap_set_porttype(self, n, sig, is_out):
+	def iomap_set_porttype(self, n, sig, otype):
+		self.iomap[n] = [otype, sig]
+
+	def iomap_set_output(self, n, sig, is_out):
+		# print("SET_IO `%s`:  %s" % (n, 'out' if is_out else 'in'))
 		otype = OUTPUT if is_out else INPUT
 		self.iomap[n] = [otype, sig]
 	
@@ -620,6 +624,8 @@ class Module:
 			# print("\tSKIP block arg %s" % arg)
 			pass
 		elif arg == None:
+			pass
+		elif isinstance(arg, dict):
 			pass
 		elif isinstance(arg, tuple):
 			pass

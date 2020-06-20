@@ -3,7 +3,7 @@ mangle = lambda p, a : "%s_%s" % (p, a)
 class _BulkSignalBase:
 	"""Preliminary bulk signal type
 Inside the blackbox environment, this is a non-nestable container
-for unidirectional signals. The direction is defined by the static _otype
+for unidirectional signals. The direction is defined by the (possibly static) _otype
 attribute in the class definition.
 
 Details:
@@ -21,9 +21,9 @@ appear in the signal list.
 
 """
 
-	def __init__(self, name = ""):
+	def __init__(self, name = "", is_out = False):
 		self._name = name
-
+		self._otype = is_out
 		for member in self.__slots__:
 			s = getattr(self, member)
 			n = mangle(self._name, member)
@@ -42,6 +42,7 @@ appear in the signal list.
 			argnames.append(name)
 
 	def collect(self, module, public = True):
+		print("============ BULK COLLECT <%s> for %s ============" % (self._name, module.name))
 		if self._otype:
 			otype = self._otype
 			impl = module.implementation
@@ -50,14 +51,14 @@ appear in the signal list.
 			impl = None
 		for n, s in self.members():
 			# Set origin and driver explicitely
-			s._driven = otype
+#			if self.blackbox:
+#				s._driven = otype
 			if not otype:
 				s.read = True
 			s._source = impl
-			module.iomap_set_porttype(s._id, s, otype)
+			module.iomap_set_output(s._id, s, otype)
 			# First look up in module if signal was already instanced:
 			if not s._id in module.wireid:
-				print("collect <%s>" % n, s._id)
 				module.collectArg(s._id, s, public, True)
 			else:
 				print("Member %s already instanced" % s._id)
@@ -65,3 +66,4 @@ appear in the signal list.
 	def convert_wires(self):
 		raise SystemError("You must implement this function in your derived class")
 			
+BulkSignalBase = _BulkSignalBase

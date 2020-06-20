@@ -62,7 +62,7 @@ def map_interface(module, name, mapping, sig, otype = None):
 			w.setDirection(IN=True, OUT=False)
 		module.wires[name] = ys.YSignal(w)
 
-	module.iomap_set_porttype(name, sig, otype)
+	module.iomap_set_output(name, sig, otype)
 
 def map_port(module, unit, mapping, identifier, sig, otype = None):
 	"""Maps a signal from the parenting `module` to the ports of a
@@ -105,13 +105,33 @@ def translate_vector(name, sig):
 # Name mangling:
 
 class BulkSignal(_BulkSignalBase):
-	def map_ports(self, module, unit):
+	_unroll = False
+
+	def map_ports(self, module, unit, unroll = None):
 		"Map ports to unit"
+
+		def _map_port_unroll(module, unit, name, s, otype):
+			"Unrolling on-the-fly mapper"
+			map_port(module, unit, translate_vector(name, s), name, s, otype)
+		def _map_port(module, unit, name, s, otype):
+			"Non unrolling mapper"
+			map_port(module, unit, [], name, s, otype)
+
+		# If we have no default unrolling set, use
+		# granular (per BulkSignal class) unrolling flag:
+		if unroll == None:
+			unroll = self._unroll
+
+		if unroll:
+			portmap = _map_port_unroll
+		else:
+			portmap = _map_port
+
 		for n in self.__slots__:
 			name = mangle(self._name, n)
 			s = getattr(self, n)
 			if isinstance(s, _Signal):
-				map_port(module, unit, translate_vector(name, s), name, s, self._otype)
+				portmap(module, unit, name, s, self._otype)
 			elif isinstance(s, BulkSignal):
 				raise TypeError("Nested bulk class signals not allowed")
 			else:
@@ -182,7 +202,7 @@ it sets the ports of the unit according to the interface signal types."""
 							m = self.mapping[n]
 							map_port(module, unit, m, n, sig)
 						elif isinstance(sig, BulkSignal):
-							sig.map_ports(module, unit)
+							sig.map_ports(module, unit, True)
 						elif isinstance(sig, (int, bool)):
 							w = ys.ConstSignal(sig)
 							unit.setPort(n, w)
@@ -202,10 +222,12 @@ it sets the ports of the unit according to the interface signal types."""
 								raise KeyError("Wire '%s' not found" % n)
 							unit.setPort(n, w)
 						elif isinstance(sig, BulkSignal):
-							sig.map_ports(module, unit)
+							sig.map_ports(module, unit, False)
 						elif isinstance(sig, (int, bool)):
 							w = ys.ConstSignal(sig)
 							unit.setPort(n, w)
+						elif hasattr(sig, '__dict__'):
+							raise TypeError("@autowrap requires BulkSignal instead of legacy signal class")
 						else:
 							raise TypeError("Unsupported arg type %s" % type(sig))
 				
@@ -334,7 +356,6 @@ def insert_sig(d, prefix, sig):
 			ns = translate(name, sig)
 			d[name] = ns
 		elif sig._type == bool:
-			print("insert %s" % name)
 			d[name] = [(name, 1)]
 		else:
 			raise TypeError("Unsupported type", sig._type)
@@ -354,6 +375,7 @@ def unroll_bulk(args, argnames):
 			sig = args[i]
 			insert_sig(mapping, n, sig)
 		else:
-			print("UNROLL: SKIP ARG %s" % n, p)
+			pass
+			# print("UNROLL: SKIP ARG %s" % n, p)
 
 	return mapping

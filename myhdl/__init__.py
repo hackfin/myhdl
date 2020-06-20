@@ -153,6 +153,7 @@ from ._join import join
 from ._Signal import posedge, negedge, Signal, SignalType
 from ._ShadowSignal import ConcatSignal
 from ._ShadowSignal import TristateSignal
+# from ._bulksignal import BulkSignalBase
 from ._simulator import now
 from ._delay import delay
 from ._Cosimulation import Cosimulation, CosimulationPipe

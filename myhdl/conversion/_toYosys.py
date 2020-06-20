@@ -1067,7 +1067,7 @@ def wireup_rtl(h, instance, design, fixup = True):
 				w = m.getCorrespondingWire(a)
 				c.setPort(n, w)
 			else:
-				print(REDBG + "Unused port: %s" % sig._name + OFF)
+				print(REDBG + "Unused port: %s" % n + OFF)
 
 	if ENABLE_DEBUG:
 		m.dump_wires()
