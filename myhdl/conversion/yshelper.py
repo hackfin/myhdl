@@ -137,8 +137,13 @@ class Design:
 	def write_ilang(self, name = "top"):
 		ys.run_pass("write_ilang %s_mapped.il" % name, self.design)
 
-	def import_verilog(self, filename):
-		ys.run_pass("read_verilog %s" % filename, self.design)
+	def import_verilog(self, filename, library = False):
+		if library:
+			libflag = '-lib'
+		else:
+			libflag = ''
+
+		ys.run_pass("read_verilog %s %s" % (libflag, filename), self.design)
 
 	def finalize(self, name = None):
 		"Finalize design so that it is visible"
@@ -1176,4 +1181,16 @@ def convert_wires(m, c, a, n, force = False):
 	else:
 		raise TypeError("Unsupported wire type for %s: %s" % (n, type(a).__name__))
 
+
+############################################################################
+# Implementation class stubs
+
+class BoardSupplyPackage:
+	"""The board supply class provides only a base method to create a
+yosys design. Typically, one derives from it and inserts own initialization"""
+	def __init__(self):
+		print("Board supply:", self.__doc__)
+	def instance(self, name):
+		design = Design(name)
+		return design
 

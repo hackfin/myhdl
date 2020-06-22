@@ -99,13 +99,13 @@ def EHXPLLL(CLKI, CLKFB, PHASESEL1, PHASESEL0, PHASEDIR, PHASESTEP, \
 
 	@instance
 	def sim():
-		yield delay(CLKI.posedge)
+		yield CLKI.posedge
 
 		for i in range(20):
-			yield delay(CLKI.posedge)
+			yield CLKI.posedge
 		locked.next = True
 		
-		print("Warning: Simulation model missing")
+		print("Warning: Simulation model for EHXPLL missing")
 
 	# @default_parameters
 	def parameters():

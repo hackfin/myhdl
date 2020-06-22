@@ -45,35 +45,44 @@ def _my_debug(details):
 def _dummy_debug(x):
 	pass
 
-_debug = _dummy_debug
+_debug = _my_debug
 
 class SynthesisObject:
 	ignoreSimulation = True
 
-	def __init__(self, func):
+	def __init__(self, func, methodclass = None):
 		self.id  = "synthesis"
 		self.func = func
 		self.name = func.__name__
+		self.method = methodclass
 
 	def infer(self, module, interface):
-		_debug("Inferring %s for module '%s'" % (self.name, module.name.str()))
-		self.func(module, interface)
+		if hasattr(module, 'name'):
+			_debug("Inferring %s for module '%s'" % (self.name, module.name.str()))
+			self.func(module, interface)
+		else:
+			raise TypeError("Incompatible module object passed")
+
+	def implement(self, name, **kwargs):
+		"Implements an object according to the given @synthesis(rule)"
+		m = self.method(**kwargs)
+		module = m.instance(name)
+		_debug("Implementing unit '%s'" % (self.name))
+		return self.func(module, name)
 
 	def blackbox(self, module, interface):
 		_debug("Default: External black box '%s' for module %s" % (self.name, module.name.str()))
 		
-
 class SynthesisFactory:
 	def __init__(self, func):
 		self.func = func
 		_debug("Wrapping for synthesis: %s()" % func.__name__)
 
 	def __call__(self, func, *args, **kwargs):
-		return SynthesisObject(func)
+		return SynthesisObject(func, self.func)
 
 def synthesis(func):
 	fact = SynthesisFactory(func)
-	_debug(fact)
 	return fact
 
 class _BlackBox(_Block):
@@ -99,21 +108,30 @@ class _BlackBox(_Block):
 		self.verilog_code = self.vhdl_code = None
 		self.sim = None
 
+		self._config_sim = {'trace': False}
+
 	def _verifySubs(self):
 		for inst in self.subs:
-			_debug(type(inst))
+			# _debug(type(inst))
 			if not isinstance(inst, (_Block, _Instantiator, CosimulationPipe, SynthesisObject)):
 				raise BlockError("ERR %s: %s not known" %  (self.name, type(inst)))
 			if isinstance(inst, (_Block, _Instantiator)):
 				if not inst.modctxt:
 					raise BlockError("ERR %s %s" % (self.name, inst.callername))
 
-	def infer(self, module, interface):
+	def infer(self, module, interface = None):
 		"Calls inference members of blackbox object"
-		interface.sigdict = self.sigdict
+		if interface:
+			interface.sigdict = self.sigdict
 		for inst in self.subs:
 			if isinstance(inst, SynthesisObject):
 				inst.infer(module, interface)
+
+	def implement(self, name, top_name, **kwargs):
+		"Implements all sub objects"
+		for inst in self.subs:
+			if inst.name == name:
+				return inst.implement(top_name, **kwargs)
 
 	def blackbox(self, module, interface):
 		"Calls all blackbox creator functions of Blackbox"

@@ -275,7 +275,7 @@ it sets the ports of the unit according to the interface signal types."""
 						module.iomap_set_porttype(n, sig, otype)
 						module.collectArg(n, sig, True, True)
 					else:
-						# print("DEFAULT PARAM %s = %s" % (p.name, p.default))
+						print("DEFAULT PARAM %s = %s" % (p.name, p.default))
 						default_param[p.name] = p.default
 
 				elif p.kind == p.VAR_KEYWORD:
