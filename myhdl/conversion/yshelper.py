@@ -16,10 +16,10 @@ from myhdl.conversion.analyze_ng import _AnalyzeTopFuncVisitor, \
 	_slice_constDict
 from myhdl._Signal import _Signal
 from myhdl._block import _Block
-from myhdl._blackbox import _BlackBox
 
 from myhdl._ShadowSignal import _ShadowSignal, _SliceSignal, _TristateDriver
 from myhdl._bulksignal import _BulkSignalBase
+from myhdl._blackbox import _BlackBox
 
 from myhdl.conversion._misc import (_get_argnames, _error)
 
@@ -416,8 +416,11 @@ as they appear not in the sigdict. Note that I/O characteristics are not yet det
 				continue
 
 			if not s._nrbits:
-				print(type(s))
-				raise ConversionError(_error.UndefinedBitWidth, s._name)
+				if isinstance(self.obj, _BlackBox):
+					print("Tolerating undefined bit width of %s for blackbox simulation" % s._id)
+				else:
+					print(type(s))
+					raise ConversionError(_error.UndefinedBitWidth, s._name)
 			# slice signals
 			for sl in s._slicesigs:
 				sl._setName("Verilog")

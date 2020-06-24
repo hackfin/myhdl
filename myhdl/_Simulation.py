@@ -40,7 +40,7 @@ schedule = _futureEvents.append
 
 
 class _error:
-    pass
+	pass
 
 
 _error.ArgType = "Inappriopriate argument type"
@@ -51,223 +51,216 @@ _error.DuplicatedArg = "Duplicated argument"
 
 
 def _flatten(*args):
-    arglist = []
-    for arg in args:
-        if isinstance(arg, _Block):
-            arg = arg.subs
-        if isinstance(arg, (list, tuple, set)):
-            for item in arg:
-                arglist.extend(_flatten(item))
-        else:
-            arglist.append(arg)
-    return arglist
+	arglist = []
+	for arg in args:
+		if isinstance(arg, _Block):
+			arg = arg.subs
+		if isinstance(arg, (list, tuple, set)):
+			for item in arg:
+				arglist.extend(_flatten(item))
+		else:
+			arglist.append(arg)
+	return arglist
 
 
 _error.MultipleSim = "Only a single Simulation instance is allowed"
 
-_lookup = { '1ps' : "000", '10ps' : "00", '100ps' : "0", '1ns' : '' }
-
 
 class Simulation(object):
 
-    """ Simulation class.
+	""" Simulation class.
 
-    Methods:
-    run -- run a simulation for some duration
+	Methods:
+	run -- run a simulation for some duration
 
-    """
-    _no_of_instances = 0
+	"""
+	_no_of_instances = 0
 
-    def __init__(self, *args):
-        """ Construct a simulation object.
+	def __init__(self, *args):
+		""" Construct a simulation object.
 
-        *args -- list of arguments. Each argument is a generator or
-                 a nested sequence of generators.
+		*args -- list of arguments. Each argument is a generator or
+				 a nested sequence of generators.
 
-        """
-        _simulator._time = 0
-        arglist = _flatten(*args)
-        self._waiters, self._cosims = _makeWaiters(arglist)
-        if Simulation._no_of_instances > 0:
-            raise SimulationError(_error.MultipleSim)
-        Simulation._no_of_instances += 1
-        self._finished = False
-        del _futureEvents[:]
-        del _siglist[:]
-        self.timescale = "1ns"
+		"""
+		_simulator._time = 0
+		arglist = _flatten(*args)
+		self._waiters, self._cosims = _makeWaiters(arglist)
+		if Simulation._no_of_instances > 0:
+			raise SimulationError(_error.MultipleSim)
+		Simulation._no_of_instances += 1
+		self._finished = False
+		del _futureEvents[:]
+		del _siglist[:]
+		self.timeunit_suffix = ''
 
-    def _finalize(self):
-        cosims = self._cosims
-        if cosims:
-            for cosim in cosims:
-                os.close(cosim._rt)
-                os.close(cosim._wf)
-                cosim._child.wait()
-            self._cosims = [] # In case we finalize twice,
-            # like from a StopSimulation event
-        if _simulator._tracing:
-            _simulator._tracing = 0
-            _simulator._tf.close()
-        # clean up for potential new run with same signals
-        for s in _signals:
-            s._clear()
-        Simulation._no_of_instances = 0
-        self._finished = True
+	def _finalize(self):
+		cosims = self._cosims
+		if cosims:
+			for cosim in cosims:
+				os.close(cosim._rt)
+				os.close(cosim._wf)
+				cosim._child.wait()
+			self._cosims = [] # In case we finalize twice,
+			# like from a StopSimulation event
+		if _simulator._tracing:
+			_simulator._tracing = 0
+			_simulator._tf.close()
+		# clean up for potential new run with same signals
+		for s in _signals:
+			s._clear()
+		Simulation._no_of_instances = 0
+		self._finished = True
 
-    def quit(self):
-        self._finalize()
+	def quit(self):
+		self._finalize()
 
-    def run(self, duration=None, quiet=0):
-        """ Run the simulation for some duration.
+	def run(self, duration=None, quiet=0):
+		""" Run the simulation for some duration.
 
-        duration -- specified simulation duration (default: forever)
-        quiet -- don't print StopSimulation messages (default: off)
+		duration -- specified simulation duration (default: forever)
+		quiet -- don't print StopSimulation messages (default: off)
 
-        """
+		"""
 
-        # If the simulation is already finished, raise StopSimulation immediately
-        # From this point it will propagate to the caller, that can catch it.
-        if self._finished:
-            raise StopSimulation("Simulation has already finished")
-        waiters = self._waiters
-        maxTime = None
-        if duration:
-            stop = _Waiter(None)
-            stop.hasRun = 1
-            maxTime = _simulator._time + duration
-            schedule((maxTime, stop))
-        cosims = self._cosims
-        t = _simulator._time
-        actives = {}
-        tracing = _simulator._tracing
-        tracefile = _simulator._tf
-        exc = []
-        _pop = waiters.pop
-        _append = waiters.append
-        _extend = waiters.extend
+		# If the simulation is already finished, raise StopSimulation immediately
+		# From this point it will propagate to the caller, that can catch it.
+		if self._finished:
+			raise StopSimulation("Simulation has already finished")
+		waiters = self._waiters
+		maxTime = None
+		if duration:
+			stop = _Waiter(None)
+			stop.hasRun = 1
+			maxTime = _simulator._time + duration
+			schedule((maxTime, stop))
+		cosims = self._cosims
+		t = _simulator._time
+		actives = {}
+		tracing = _simulator._tracing
+		tracefile = _simulator._tf
+		exc = []
+		_pop = waiters.pop
+		_append = waiters.append
+		_extend = waiters.extend
 
-        try:
-            unitstring = _lookup[self.timescale]
-        except:
-            raise SimulationError("Unsupported timescale %s" % self.timescale)
+		while 1:
+			try:
 
-        while 1:
-            try:
+				for s in _siglist:
+					_extend(s._update())
+				del _siglist[:]
 
-                for s in _siglist:
-                    _extend(s._update())
-                del _siglist[:]
+				while waiters:
+					waiter = _pop()
+					try:
+						waiter.next(waiters, actives, exc)
+					except StopIteration:
+						continue
 
-                while waiters:
-                    waiter = _pop()
-                    try:
-                        waiter.next(waiters, actives, exc)
-                    except StopIteration:
-                        continue
+				if cosims:
+					any_cosim_changes = False
+					for cosim in cosims:
+						any_cosim_changes = \
+							any_cosim_changes or cosim._hasChange
+					for cosim in cosims:
+						cosim._get()
+					if _siglist or any_cosim_changes:
+						# It should be safe to _put a cosim with no changes
+						# because _put with the same values should be
+						# idempotent. We need to _put them all here because
+						# otherwise we can desync _get/_put.
+						for cosim in cosims:
+							cosim._put(t)
+						continue
+				elif _siglist:
+					continue
 
-                if cosims:
-                    any_cosim_changes = False
-                    for cosim in cosims:
-                        any_cosim_changes = \
-                            any_cosim_changes or cosim._hasChange
-                    for cosim in cosims:
-                        cosim._get()
-                    if _siglist or any_cosim_changes:
-                        # It should be safe to _put a cosim with no changes
-                        # because _put with the same values should be
-                        # idempotent. We need to _put them all here because
-                        # otherwise we can desync _get/_put.
-                        for cosim in cosims:
-                            cosim._put(t)
-                        continue
-                elif _siglist:
-                    continue
+				if actives:
+					for wl in actives.values():
+						wl.purge()
+					actives = {}
 
-                if actives:
-                    for wl in actives.values():
-                        wl.purge()
-                    actives = {}
+				# at this point it is safe to potentially suspend a simulation
+				if exc:
+					raise exc[0]
 
-                # at this point it is safe to potentially suspend a simulation
-                if exc:
-                    raise exc[0]
+				# future events
+				if _futureEvents:
+					if t == maxTime:
+						raise _SuspendSimulation(
+							"Simulated %s timesteps" % duration)
+					_futureEvents.sort(key=itemgetter(0))
+					t = _simulator._time = _futureEvents[0][0]
+					if tracing:
+						print("#%s%s" % (t, self.timeunit_suffix), file=tracefile)
+					if cosims:
+						for cosim in cosims:
+							cosim._put(t)
+					while _futureEvents:
+						newt, event = _futureEvents[0]
+						if newt == t:
+							if isinstance(event, _Waiter):
+								_append(event)
+							else:
+								_extend(event.apply())
+							del _futureEvents[0]
+						else:
+							break
+				else:
+					raise StopSimulation("No more events")
 
-                # future events
-                if _futureEvents:
-                    if t == maxTime:
-                        raise _SuspendSimulation(
-                            "Simulated %s timesteps" % duration)
-                    _futureEvents.sort(key=itemgetter(0))
-                    t = _simulator._time = _futureEvents[0][0]
-                    if tracing:
-                        print("#%s%s" % (t, unitstring), file=tracefile)
-                    if cosims:
-                        for cosim in cosims:
-                            cosim._put(t)
-                    while _futureEvents:
-                        newt, event = _futureEvents[0]
-                        if newt == t:
-                            if isinstance(event, _Waiter):
-                                _append(event)
-                            else:
-                                _extend(event.apply())
-                            del _futureEvents[0]
-                        else:
-                            break
-                else:
-                    raise StopSimulation("No more events")
+			except _SuspendSimulation:
+				if not quiet:
+					_printExcInfo()
+				if tracing:
+					tracefile.flush()
+				return 1
 
-            except _SuspendSimulation:
-                if not quiet:
-                    _printExcInfo()
-                if tracing:
-                    tracefile.flush()
-                return 1
+			except StopSimulation:
+				if not quiet:
+					_printExcInfo()
+				self._finalize()
+				self._finished = True
+				return 0
 
-            except StopSimulation:
-                if not quiet:
-                    _printExcInfo()
-                self._finalize()
-                self._finished = True
-                return 0
-
-            except Exception as e:
-                if tracing:
-                    tracefile.flush()
-                # if the exception came from a yield, make sure we can resume
-                if exc and e is exc[0]:
-                    pass  # don't finalize
-                else:
-                    self._finalize()
-                # now reraise the exepction
-                raise
+			except Exception as e:
+				if tracing:
+					tracefile.flush()
+				# if the exception came from a yield, make sure we can resume
+				if exc and e is exc[0]:
+					pass  # don't finalize
+				else:
+					self._finalize()
+				# now reraise the exepction
+				raise
 
 
 def _makeWaiters(arglist):
-    waiters = []
-    ids = set()
-    cosims = []
-    for arg in arglist:
-        if isinstance(arg, GeneratorType):
-            waiters.append(_inferWaiter(arg))
-        elif isinstance(arg, _Instantiator):
-            waiters.append(arg.waiter)
-        elif isinstance(arg, CosimulationPipe):
-            cosims.append(arg)
-            waiters.append(_SignalTupleWaiter(arg._waiter()))
-        elif isinstance(arg, _Waiter):
-            waiters.append(arg)
-        elif hasattr(arg, 'ignoreSimulation'):
-            pass
-        elif arg == True:
-            pass
-        else:
-            raise SimulationError(_error.ArgType, str(type(arg)))
-        if id(arg) in ids:
-            raise SimulationError(_error.DuplicatedArg)
-        ids.add(id(arg))
-    # add waiters for shadow signals
-    for sig in _signals:
-        if hasattr(sig, '_waiter'):
-            waiters.append(sig._waiter)
-    return waiters, cosims
+	waiters = []
+	ids = set()
+	cosims = []
+	for arg in arglist:
+		if isinstance(arg, GeneratorType):
+			waiters.append(_inferWaiter(arg))
+		elif isinstance(arg, _Instantiator):
+			waiters.append(arg.waiter)
+		elif isinstance(arg, CosimulationPipe):
+			cosims.append(arg)
+			waiters.append(_SignalTupleWaiter(arg._waiter()))
+		elif isinstance(arg, _Waiter):
+			waiters.append(arg)
+		elif hasattr(arg, 'ignoreSimulation'):
+			pass
+		elif arg == True:
+			pass
+		else:
+			raise SimulationError(_error.ArgType, str(type(arg)))
+		if id(arg) in ids:
+			raise SimulationError(_error.DuplicatedArg)
+		ids.add(id(arg))
+	# add waiters for shadow signals
+	for sig in _signals:
+		if hasattr(sig, '_waiter'):
+			waiters.append(sig._waiter)
+	return waiters, cosims

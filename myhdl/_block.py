@@ -276,7 +276,7 @@ class _Block(object):
 				elif hasattr(i, '__dict__'):
 					# print("Container %s, type %s" % (n, type(i).__name__))
 					# for n, obj in i.__dict__.items():
-					# 	print(n, obj)
+					#	print(n, obj)
 
 					expand(n + '_', i.__dict__, level + 1)
 				elif hasattr(i, '__slots__'):
@@ -406,14 +406,15 @@ class _Block(object):
 				setattr(myhdl.traceSignals, k, v)
 			myhdl.traceSignals(self)
 
-	def run_sim(self, duration=None, quiet=0):
+	def run_sim(self, duration=None, quiet=0, timeunit_suffix = False):
 		if self.sim is None:
 			sim = self
 			#if self._config_sim['trace']:
 			#	 sim = myhdl.traceSignals(self)
 			# This messing with globals is ugly.
 			self.sim = myhdl._Simulation.Simulation(sim)
-			self.sim. timescale = myhdl.traceSignals.timescale
+			if timeunit_suffix:
+				self.sim.timeunit_suffix = timeunit_suffix
 		self.sim.run(duration, quiet)
 
 	def quit_sim(self):

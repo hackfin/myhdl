@@ -50,6 +50,7 @@ from myhdl._util import _isTupleOfInts
 from myhdl._util import _makeAST
 from myhdl._resolverefs import _AttrRefTransformer
 from myhdl._compat import builtins, integer_types, PY2
+from myhdl._blackbox import _BlackBox
 
 myhdlObjects = myhdl.__dict__.values()
 builtinObjects = builtins.__dict__.values()
@@ -95,7 +96,7 @@ def _analyzeGens(inst, top, absnames):
 			tree.name = absnames.get(id(g), str(_Label("BLOCK"))).upper()
 			v = _AttrRefTransformer(tree)
 			v.visit(tree)
-			v = _FirstPassVisitor(tree)
+			v = _FirstPassVisitor(tree, isinstance(inst.obj, _BlackBox))
 			v.visit(tree)
 			if isinstance(g, _AlwaysComb):
 				v = _AnalyzeAlwaysCombVisitor(tree, g.senslist)
@@ -132,9 +133,10 @@ class _FirstPassVisitor(ast.NodeVisitor, _ConversionMixin):
 
 	"""
 
-	def __init__(self, tree):
+	def __init__(self, tree, is_blackbox = False):
 		self.tree = tree
 		self.toplevel = True
+		self.blackbox = is_blackbox
 
 	def visit_Tuple(self, node):
 		if isinstance(node.ctx, ast.Store):
@@ -150,7 +152,7 @@ class _FirstPassVisitor(ast.NodeVisitor, _ConversionMixin):
 		self.raiseError(node, _error.NotSupported, "dictionary")
 
 	def visit_BinOp(self, node):
-		if isinstance(node.op, ast.Div):
+		if isinstance(node.op, ast.Div) and not self.blackbox:
 			self.raiseError(node, _error.NotSupported, "true division - consider '//'")
 
 	def visit_Ellipsis(self, node):
