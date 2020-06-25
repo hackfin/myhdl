@@ -34,6 +34,7 @@ from myhdl._bulksignal import _BulkSignalBase, mangle
 from myhdl.conversion import yshelper as ys
 
 from myhdl._Signal import _Signal
+from myhdl._ShadowSignal import _ShadowSignal
 
 
 def map_interface(module, name, mapping, sig, otype = None):
