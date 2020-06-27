@@ -37,10 +37,10 @@ from myhdl._Signal import _Signal
 from myhdl._ShadowSignal import _ShadowSignal
 
 
-def map_interface(module, name, mapping, sig, otype = None):
+def map_interface(module, name, mapping, sig, is_out = None):
 	"""Map signal to module interface."""
-	if otype == None:
-		otype, _ = signal_output_type(module.implementation, sig)
+	if is_out == None:
+		is_out, _ = signal_output_type(module.implementation, sig)
 
 	l = len(mapping)
 
@@ -49,7 +49,7 @@ def map_interface(module, name, mapping, sig, otype = None):
 			identifier = "%s%d" % (name, j)
 			# Make sure to add a 'public' wire:
 			w = module.addWire(identifier, 1, True)
-			if otype:
+			if is_out:
 				w.setDirection(IN=False, OUT=True)
 			else:
 				w.setDirection(IN=True, OUT=False)
@@ -57,13 +57,13 @@ def map_interface(module, name, mapping, sig, otype = None):
 			module.wires[identifier] = ys.YSignal(w)
 	else:
 		w = module.addWire(name, 1, True)
-		if otype:
+		if is_out:
 			w.setDirection(IN=False, OUT=True)
 		else:
 			w.setDirection(IN=True, OUT=False)
 		module.wires[name] = ys.YSignal(w)
 
-	module.iomap_set_output(name, sig, otype)
+	module.iomap_set_output(name, sig, is_out)
 
 def map_port(module, unit, mapping, identifier, sig, otype = None):
 	"""Maps a signal from the parenting `module` to the ports of a
