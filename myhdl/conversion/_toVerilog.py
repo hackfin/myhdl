@@ -173,7 +173,6 @@ class _ToVerilogConvertor(object):
 
         ### initialize properly ###
         _genUniqueSuffix.reset()
-
         arglist = _flatten(h.top)
         # print h.top
         _checkArgs(arglist)
@@ -188,6 +187,13 @@ class _ToVerilogConvertor(object):
             intf = func
         else:
             intf = _analyzeTopFunc(func, *args, **kwargs)
+        
+        # don't write testbench if module has no ports
+        if len(intf.argnames) > 0 and not toVerilog.no_testbench:
+            tbpath = os.path.join(directory, "tb_" + vfilename)
+            tbfile = open(tbpath, 'w')
+            _writeTestBench(tbfile, intf, self.trace)
+            tbfile.close()
 
         intf.name = self.name_prefix + name
 
@@ -203,12 +209,6 @@ class _ToVerilogConvertor(object):
 
         vfile.close()
 
-        # don't write testbench if module has no ports
-        if len(intf.argnames) > 0 and not toVerilog.no_testbench:
-            tbpath = os.path.join(directory, "tb_" + vfilename)
-            tbfile = open(tbpath, 'w')
-            _writeTestBench(tbfile, intf, self.trace)
-            tbfile.close()
 
         # build portmap for cosimulation
         portmap = {}

@@ -4,7 +4,7 @@
 #
 # (c) 2020 section5.ch
 #
-# Implements @synthesis() decorator for inference hints to synthesis
+# Implements @inference() decorator for inference hints to synthesis
 # factories.
 # Currently, only yosys is supported.
 #
@@ -76,14 +76,16 @@ class SynthesisObject:
 class SynthesisFactory:
 	def __init__(self, func):
 		self.func = func
-		_debug("Wrapping for synthesis: %s()" % func.__name__)
+		_debug("Wrapping for inference: %s()" % func.__name__)
 
 	def __call__(self, func, *args, **kwargs):
 		return SynthesisObject(func, self.func)
 
-def synthesis(func):
+def inference(func):
 	fact = SynthesisFactory(func)
 	return fact
+
+synthesis = inference
 
 class _BlackBox(_Block):
 	def __init__(self, func, deco, name, srcfile, srcline, *args, **kwargs):
@@ -128,7 +130,8 @@ class _BlackBox(_Block):
 				inst.infer(module, interface)
 
 	def implement(self, name, top_name, **kwargs):
-		"Implements all sub objects"
+		"""Implements all sub objects of method `name` and renames
+the top level object to `top_name`"""
 		for inst in self.subs:
 			if inst.name == name:
 				return inst.implement(top_name, **kwargs)

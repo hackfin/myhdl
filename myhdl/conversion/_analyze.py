@@ -171,7 +171,7 @@ def _analyzeGens(top, absnames):
                 v = _AnalyzeAlwaysDecoVisitor(tree, g.senslist)
             v.visit(tree)
         elif isinstance(g, SynthesisObject):
-            pass
+            continue
         else:  # @instance
             f = g.gen.gi_frame
             tree = g.ast

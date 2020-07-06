@@ -470,6 +470,7 @@ class _AnalyzeVisitor(ast.NodeVisitor, _ConversionMixin):
 			self.kind = _kind.NORMAL
 			n = target.id
 			if n in self.tree.sigdict:
+				print("Visiting variable '%s'" % n)
 				self.raiseError(node, _error.ShadowingVar)
 			obj = self.getObj(value)
 			if obj is None:

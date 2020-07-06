@@ -203,7 +203,19 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				# TODO: Type check
 				self.dbg(node, BLUEBG, "REASSIGN", "reassign to variable %s" % (name))
 				# Set reference to right hand side:
+				psm = self.variables[name]
+				ps = psm.q.size()
 				sm = rhs.syn
+				q = sm.q
+				if q.size() > ps:
+					newsize = q.size()
+					# If new argument is unsigned, we need one bit extra headroom:
+					if sm.is_signed == False:
+						newsize += 1
+					psm.q.extend_u0(newsize, psm.is_signed)
+					self.dbg(node, BLUEBG, "RESIZE", "   Must resize: %d -> %d (%s)" % \
+						(ps, q.size(), "signed" if psm.is_signed else "unsigned"))
+
 		elif isinstance(lhs.obj, _Signal):
 			drvname = lhs.value.id # Default driver name
 			node.id = drvname
@@ -701,7 +713,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		elif isinstance(obj, (_Signal, intbv) ):
 			self.accessIndex(node)
 		else:
-			self.dbg(node, REDBG, "UNHANDLED INDEX", type(v))
+			self.dbg(node, REDBG, "UNHANDLED INDEX", type(obj))
 			raise Synth_Nosupp("Can't handle this YET")
 	
 
