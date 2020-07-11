@@ -1,6 +1,6 @@
 # Blackbox wrapper implementation
 #
-# PROTOYPE STADIUM, rather unstable
+# PROTOYPE STADIUM, rather stable
 #
 # (c) 2020 section5.ch
 #
@@ -68,7 +68,10 @@ class SynthesisObject:
 		m = self.method(**kwargs)
 		module = m.instance(name)
 		_debug("Implementing unit '%s'" % (self.name))
-		return self.func(module, name)
+		ret = self.func(module, name)
+		if ret == None:
+			raise ValueError("Did you return the generator from the @blackbox entity?")
+		return ret
 
 	def blackbox(self, module, interface):
 		_debug("Default: External black box '%s' for module %s" % (self.name, module.name.str()))
@@ -135,6 +138,8 @@ the top level object to `top_name`"""
 		for inst in self.subs:
 			if inst.name == name:
 				return inst.implement(top_name, **kwargs)
+		raise KeyError("Unable to find inference function '%s'\n" % name + \
+		               "Did you return it from the @blackbox entity?")
 
 	def blackbox(self, module, interface):
 		"Calls all blackbox creator functions of Blackbox"

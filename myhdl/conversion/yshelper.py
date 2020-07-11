@@ -438,6 +438,7 @@ as they appear not in the sigdict. Note that I/O characteristics are not yet det
 		infer_interface(blk)
 
 	def get_io(self):
+		"Gets input/output state of signals used by the current module"
 		inputs = set()
 		outputs = set()
 		for t in self.genlist:

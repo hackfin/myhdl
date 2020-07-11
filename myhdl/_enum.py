@@ -100,6 +100,9 @@ def enum(*names, **kwargs):
         def __hex__(self):
             return hex(int(self._val, 2))
 
+        def _fromInt(self, i):
+            self._val = "{0:b}".format(i)
+
         def _toVerilog(self, dontcare=False):
             val = self._val
             if dontcare:

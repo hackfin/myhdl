@@ -138,9 +138,9 @@ class _Signal(object):
         self._next = deepcopy(val)
         self._min = self._max = None
         self._name = self._driven = None
-		# Identifier (hash, name, etc.)
+        # Identifier (hash, name, etc.)
         self._id = None
-		# Driver source:
+        # Driver source:
         self._source = None
         self._read = self._used = False
         self._inList = False
