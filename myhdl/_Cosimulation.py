@@ -28,7 +28,9 @@ import subprocess
 from myhdl._intbv import intbv
 from myhdl import _simulator, CosimulationError
 from myhdl._compat import set_inheritable, string_types, to_bytes, to_str
-
+from myhdl._enum import EnumItemType
+from copy import deepcopy
+ 
 _MAXLINE = 4096
 
 
@@ -166,7 +168,16 @@ class CosimulationPipe:
                             next |= (-1 << s._nrbits)
                 except ValueError:
                     next = intbv(0)
-            s.next = next
+            try:
+                s.next = next
+            except:
+                # Be a little tolerant with integers:
+                if isinstance(s._val, EnumItemType):
+                    tmp = deepcopy(s)
+                    tmp._fromInt(next)
+                    s._val = tmp
+                else:
+                    raise ValueError("Can not assign .next of `%s`, not a supported signal type?" % e[i])
 
         self._getMode = 0
 

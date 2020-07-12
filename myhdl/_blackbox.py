@@ -1,10 +1,10 @@
 # Blackbox wrapper implementation
 #
-# PROTOYPE STADIUM, rather unstable
+# PROTOYPE STADIUM, rather stable
 #
 # (c) 2020 section5.ch
 #
-# Implements @synthesis() decorator for inference hints to synthesis
+# Implements @inference() decorator for inference hints to synthesis
 # factories.
 # Currently, only yosys is supported.
 #
@@ -68,7 +68,10 @@ class SynthesisObject:
 		m = self.method(**kwargs)
 		module = m.instance(name)
 		_debug("Implementing unit '%s'" % (self.name))
-		return self.func(module, name)
+		ret = self.func(module, name)
+		if ret == None:
+			raise ValueError("Did you return the generator from the @blackbox entity?")
+		return ret
 
 	def blackbox(self, module, interface):
 		_debug("Default: External black box '%s' for module %s" % (self.name, module.name.str()))
@@ -76,14 +79,16 @@ class SynthesisObject:
 class SynthesisFactory:
 	def __init__(self, func):
 		self.func = func
-		_debug("Wrapping for synthesis: %s()" % func.__name__)
+		_debug("Wrapping for inference: %s()" % func.__name__)
 
 	def __call__(self, func, *args, **kwargs):
 		return SynthesisObject(func, self.func)
 
-def synthesis(func):
+def inference(func):
 	fact = SynthesisFactory(func)
 	return fact
+
+synthesis = inference
 
 class _BlackBox(_Block):
 	def __init__(self, func, deco, name, srcfile, srcline, *args, **kwargs):
@@ -128,10 +133,13 @@ class _BlackBox(_Block):
 				inst.infer(module, interface)
 
 	def implement(self, name, top_name, **kwargs):
-		"Implements all sub objects"
+		"""Implements all sub objects of method `name` and renames
+the top level object to `top_name`"""
 		for inst in self.subs:
 			if inst.name == name:
 				return inst.implement(top_name, **kwargs)
+		raise KeyError("Unable to find inference function '%s'\n" % name + \
+		               "Did you return it from the @blackbox entity?")
 
 	def blackbox(self, module, interface):
 		"Calls all blackbox creator functions of Blackbox"

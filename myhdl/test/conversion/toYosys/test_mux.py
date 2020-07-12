@@ -206,6 +206,7 @@ def var_mux(clk, ce, reset, dout, debug):
 			v = 0xff
 
 		dout.next = v
+		debug.next = False
 
 	return instances()
 
@@ -238,6 +239,33 @@ def var_pmux(clk, ce, reset, dout, debug):
 	return instances()
 
 @block
+def var_ext_signed_unsigned(clk, ce, reset, dout, debug):
+	"Case with wrong bit width initialization"
+	o = Signal(modbv()[8:])
+	inst_lfsr1 = lfsr8(clk, ce, reset, 0, o)
+
+	# @always_seq(clk.posedge, reset)
+	@always_comb
+	def worker():
+
+		v = -1
+
+		debug.next = False
+
+		if o == 3:
+			if ce:
+				v = 4
+		elif o == 1:
+			v = 2
+		else:
+			v = 0
+
+		dout.next = v
+
+	return instances()
+
+
+@block
 def pitfall_redef(clk, ce, reset, dout, debug):
 	"""Do we allow this?"""
 	state = Signal(intbv(0)[5:])
@@ -265,6 +293,7 @@ def pitfall_redef(clk, ce, reset, dout, debug):
 UUT_LIST = [ defaults1, defaults2, defaults3, complex_select ]
 
 UUT_LIST += [ no_default ]
+UUT_LIST += [ var_mux, var_pmux, var_ext_signed_unsigned ]
 
 
 @pytest.mark.parametrize("uut", UUT_LIST)
@@ -274,7 +303,7 @@ def test_mux(uut):
 	run_tb(tb_unit(uut, mapped_uut, arst), 20000)
 
 
-UUT_BROKEN_LIST = [ var_mux, var_pmux, pitfall_redef  ]
+UUT_BROKEN_LIST = [ pitfall_redef  ]
 
 @pytest.mark.xfail
 @pytest.mark.parametrize("uut", UUT_BROKEN_LIST)

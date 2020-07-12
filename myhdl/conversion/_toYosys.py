@@ -203,7 +203,19 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 				# TODO: Type check
 				self.dbg(node, BLUEBG, "REASSIGN", "reassign to variable %s" % (name))
 				# Set reference to right hand side:
+				psm = self.variables[name]
+				ps = psm.q.size()
 				sm = rhs.syn
+				q = sm.q
+				if q.size() > ps:
+					newsize = q.size()
+					# If new argument is unsigned, we need one bit extra headroom:
+					if sm.is_signed == False:
+						newsize += 1
+					psm.q.extend_u0(newsize, psm.is_signed)
+					self.dbg(node, BLUEBG, "RESIZE", "   Must resize: %d -> %d (%s)" % \
+						(ps, q.size(), "signed" if psm.is_signed else "unsigned"))
+
 		elif isinstance(lhs.obj, _Signal):
 			drvname = lhs.value.id # Default driver name
 			node.id = drvname
@@ -701,7 +713,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		elif isinstance(obj, (_Signal, intbv) ):
 			self.accessIndex(node)
 		else:
-			self.dbg(node, REDBG, "UNHANDLED INDEX", type(v))
+			self.dbg(node, REDBG, "UNHANDLED INDEX", type(obj))
 			raise Synth_Nosupp("Can't handle this YET")
 	
 
@@ -954,6 +966,26 @@ def infer_handle_interface(design, instance, propagate_io_properties = False):
 	instance.module = m
 	parameters = inspect.signature(instance.obj.func).parameters.items()
 
+	lookup = {}
+	
+	for p in parameters:
+		name, param = p
+		if name in instance.obj.argdict:
+			s = instance.obj.argdict[name]
+			lookup[s._id] = name
+		elif name in instance.symdict:
+			arg = instance.symdict[name]
+			if hasattr(arg, '__dict__'):
+				for n, sm in arg.__dict__.items():
+					identifier = '%s_%s' % (name, n)
+					if isinstance(sm, _Signal):
+						lookup[sm._id] = identifier
+					else:
+						print("Non-Signal member %s" % identifier)
+		else:
+			raise ValueError("Parameter missing in dictionary")
+
+
 	# Ugly function to propagate I/O properties of signals that are
 	# wired through (pure ports):
 	if propagate_io_properties:
@@ -962,27 +994,21 @@ def infer_handle_interface(design, instance, propagate_io_properties = False):
 
 			im = inst.module
 
-			lookup = {}
-			
-			for p in parameters:
-				name, param = p
-				if name in instance.obj.argdict:
-					s = instance.obj.argdict[name]
-					lookup[s._id] = name
-
 			if im:
 				for n, i in im.iomap.items():
 					otype, s = i
 					if s._id in lookup:
-						if otype == 2:
-							inout = "-->"
-						else:
-							inout = "<--"
+#						if otype == HIGHZ:
+#							print("HIGHZ: %s" % n)
 						pn = lookup[s._id]
 						if pn in m.iomap:
+							# print("Propagating (sub) I/O type for %s" % pn)
 							m.iomap[pn][0] = otype
 						else:
+							# print("Propagating I/O type for %s" % pn)
 							m.iomap[pn] = [ otype, s ]
+					# else:
+					# 	print("Not in lookup", s._id)
 
 	m.collectWires(instance, parameters)
 	return m

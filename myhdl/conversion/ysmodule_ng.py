@@ -368,6 +368,9 @@ class Module:
 		self._namespace = \
 			[ self.memories, self.arrays, self.wires, self.parent_signals ]
 
+	def warning(self, msg, col = REDBG):
+		print(col + "WARNING:" + msg + OFF)
+	
 	def debugmsg(self, msg, col = REDBG):
 		print(col + msg + OFF)
 	
@@ -502,12 +505,22 @@ class Module:
 
 	def getCorrespondingWire(self, sig):
 		if not sig._id:
-			raise ValueError("Can not have None as ID for %s" % sig._name)
-		identifier = self.wireid[sig._id]
-		w = self.findWireByName(identifier)
-		if not w:
-			raise KeyError("Wire `%s` not found" % identifier)
-		return w
+			if sig.read or sig.driven:
+				raise ValueError("Can not have None as ID for %s::`%s`.\n"  % (self.name, sig._name) + \
+				"Possibly, a class signal member is unused in this hierarchy level\n" + \
+				"You may have to explicitely set the ID in the top level wrapper to use\n" + \
+				"this signal in synthesis or use a BulkSignal class in the interface.")
+			else:
+				identifier = "unused::%s" % sig._name
+				self.warning("Adding stub for unused signal '%s'" % sig._name)
+				w = self.addSignal(identifier, len(sig), False)
+				return w
+		else:
+			identifier = self.wireid[sig._id]
+			w = self.findWireByName(identifier)
+			if not w:
+				raise KeyError("Wire `%s` not found" % identifier)
+			return w
 
 	def findWire(self, sig, reserved = False):
 		# TODO: Simplify, once elegant handling found
@@ -543,7 +556,6 @@ class Module:
 		self.iomap[n] = [otype, sig]
 
 	def iomap_set_output(self, n, sig, is_out):
-		# print("SET_IO `%s`:  %s" % (n, 'out' if is_out else 'in'))
 		otype = OUTPUT if is_out else INPUT
 		self.iomap[n] = [otype, sig]
 	
@@ -568,8 +580,8 @@ class Module:
 			otype, src = self.signal_output_type(name)
 			# TODO: Clock signal could be flagged for debugging purposes
 			# Currently, it tends to be regarded as 'floating'
-			#if is_port:
-			#	print("PORT SIGNAL %s" % name)
+#			if is_port:
+#				print("PORT SIGNAL %s" % name)
 
 			if otype == OUTPUT:
 				self.debugmsg("\tWire OUT (%s) `%s`, id: `%s`, driver: %s" % \
@@ -677,17 +689,20 @@ class Module:
 		def sig_otype(iomap, arg, name, inputs, outputs):
 
 			if isinstance(arg, _Signal):
-				if name in inputs:
-					if name in outputs:
-						otype = INOUT
+				if not name in iomap:
+					if name in inputs:
+						if name in outputs:
+							otype = INOUT
+						else:
+							otype = INPUT
+					elif name in outputs:
+						otype = OUTPUT
 					else:
-						otype = INPUT
-				elif name in outputs:
-					otype = OUTPUT
+						self.debugmsg("Undetermined I/O state of %s" % name)
+						otype = HIGHZ
+					iomap[name] = [otype, arg]
 				else:
-					self.debugmsg("Undetermined I/O state of %s" % name)
-					otype = HIGHZ
-				iomap[name] = [otype, arg]
+					self.debugmsg("I/O inherited: %s" % name)
 
 			elif hasattr(arg, '__dict__'):
 				for mn, member in arg.__dict__.items():

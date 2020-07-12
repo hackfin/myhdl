@@ -438,6 +438,7 @@ as they appear not in the sigdict. Note that I/O characteristics are not yet det
 		infer_interface(blk)
 
 	def get_io(self):
+		"Gets input/output state of signals used by the current module"
 		inputs = set()
 		outputs = set()
 		for t in self.genlist:
@@ -861,7 +862,7 @@ Used for separation of common functionality of visitor classes"""
 			# Wire EN pins to True
 			elif isinstance(stmt, ast.For):
 				pass
-			else:
+			elif hasattr(stmt, 'syn'):
 				if stmt.syn.el_type == SM_MEMPORT:
 					cc = m.addSignal(None, 0)
 					c = ConstSignal(True)
@@ -871,6 +872,8 @@ Used for separation of common functionality of visitor classes"""
 					m.connect(en_sig, cc)
 				else:
 					self.dbg(stmt, REDBG, "UNHANDLED", "")
+			else:
+				self.dbg(stmt, REDBG, "IGNORED STATEMENT", "")
 		
 		# Left overs (non-muxed):
 		for n, i in default_assignments.items():		
@@ -984,6 +987,7 @@ Used for separation of common functionality of visitor classes"""
 			proto = w if w else self.variables[dr_id].q
 			size = proto.size()
 
+
 			varray = m.addSignal(None, 0)
 			default = None
 
@@ -997,6 +1001,12 @@ Used for separation of common functionality of visitor classes"""
 					drv = default
 
 				cc.append(decision_signals[i])
+				if drv.size() < size:
+					self.dbg(node, REDBG, "RESIZING %d -> %d >>>" % (drv.size(), size))
+					drv.extend_u0(size, False)
+				elif drv.size() > size:
+					raise ValueError("PMUX input signals must have same size %d" % size)
+
 				varray.append(drv)
 
 			other = drivers[0][1] # First is 'other'
@@ -1011,7 +1021,10 @@ Used for separation of common functionality of visitor classes"""
 	
 			y = m.addSignal(self.genid(node, dr_id + "_out"), size)
 
-			name = self.genid(node, "PMUX_%s" % dr_id)
+			name = self.genid(node, "PMUX_%s(%s)" % (dr_id, size))
+
+			if o.size() < size:
+				o.extend_u0(size, False)
 
 			m.addPmux(name, o, varray, cc, y)
 			node.syn.drivers[dr_id] = [ y, other, default ]
@@ -1188,12 +1201,15 @@ def convert_wires(m, c, a, n, force = False):
 ############################################################################
 # Implementation class stubs
 
-class BoardSupplyPackage:
+class Implementation:
 	"""The board supply class provides only a base method to create a
 yosys design. Typically, one derives from it and inserts own initialization"""
 	def __init__(self):
-		print("Board supply:", self.__doc__)
+		print("Implementation:", self.__doc__)
 	def instance(self, name):
 		design = Design(name)
 		return design
+
+# Compatibility:
+BoardSupplyPackage = Implementation
 
