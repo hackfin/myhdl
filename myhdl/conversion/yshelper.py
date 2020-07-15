@@ -886,7 +886,7 @@ Used for separation of common functionality of visitor classes"""
 
 		if isinstance(stmt, ast.Assign):
 			name = stmt.id
-			self.dbg(stmt, BLUEBG, "SET DEFAULT", name)
+			# self.dbg(stmt, BLUEBG, "SET DEFAULT", name)
 			if not name in drv:
 				lineno = self.getLineNo(stmt)
 				drv[name] = [ ("l:%d$default_%d" % (lineno, i), None) for i in range(n) ]
@@ -904,7 +904,6 @@ Used for separation of common functionality of visitor classes"""
 		elif isinstance(stmt, ast.If):
 			if stmt.ignore:
 				return
-
 			for t in stmt.drivers.items():
 				name, i = t
 				mux_id = self.node_tag(stmt)
@@ -982,7 +981,7 @@ Used for separation of common functionality of visitor classes"""
 
 		m = self.context
 		for dr_id, drivers in node.drivers.items():
-			self.dbg(node, GREEN, "PMUX WALK DRV >>>", dr_id)
+			# self.dbg(node, GREEN, "PMUX WALK DRV >>>", dr_id)
 			w = m.findWireByName(dr_id)
 			proto = w if w else self.variables[dr_id].q
 			size = proto.size()
@@ -1035,8 +1034,9 @@ Used for separation of common functionality of visitor classes"""
 		decision_signals = self.create_mux_table(node, implicit)
 
 		m = self.context
+		c = 0
 		for dr_id, drivers in node.drivers.items():
-			self.dbg(node, GREEN, "MUX WALK DRV >>>", dr_id)
+			# self.dbg(node, GREEN, "MUX WALK DRV >>>", dr_id)
 			w = m.findWireByName(dr_id)
 			proto = w if w else self.variables[dr_id].q
 			size = proto.size()
@@ -1060,7 +1060,8 @@ Used for separation of common functionality of visitor classes"""
 						default = m.addSignal(name, size)
 					drv = default
 
-				name = self.genid(mux_id, "MUX_%s" % dr_id)
+				name = self.genid(mux_id, "MUX%d_%s" % (c, dr_id))
+				c += 1
 				other = m.addSignal(None, size)
 				s = decision_signals[i]
 				m.addMux(name, other, drv, s, y)
@@ -1086,7 +1087,8 @@ Used for separation of common functionality of visitor classes"""
 				drv = default
 
 			s = decision_signals[-1]
-			name = self.genid(mux_id, "MUX_%s" % dr_id)
+			name = self.genid(mux_id, "MUX%d_%s" % (c, dr_id))
+			c += 1
 			m.addMux(name, next_other, drv, s, y)
 
 			# Insert output and `else_sig` into multiplexer

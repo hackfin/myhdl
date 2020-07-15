@@ -192,6 +192,31 @@ def no_default(clk, ce, reset, dout, debug):
 	return instances()
 
 @block
+def multi_defaults(clk, ce, reset, dout, debug):
+	"Multiple implicit defaults"
+	counter = Signal(modbv(0)[8:])
+
+	ctr = up_counter(clk, ce, reset, counter)
+	a, b = (Signal(modbv(0)[8:]) for i in range(2))
+
+	@always_seq(clk.posedge, reset)
+	def case_pmux():
+		if counter == 3:
+			if ce:
+				a.next = False
+		elif counter == 4:
+			b.next = True
+		elif counter == 5:
+			b.next = True
+
+	@always_comb
+	def assign():
+		dout.next = a ^ b
+
+	return instances()
+
+
+@block
 def var_mux(clk, ce, reset, dout, debug):
 	"Case with wrong bit width initialization"
 	o = Signal(modbv()[8:])
@@ -292,7 +317,7 @@ def pitfall_redef(clk, ce, reset, dout, debug):
 
 UUT_LIST = [ defaults1, defaults2, defaults3, complex_select ]
 
-UUT_LIST += [ no_default ]
+UUT_LIST += [ no_default, multi_defaults ]
 UUT_LIST += [ var_mux, var_pmux, var_ext_signed_unsigned ]
 
 
