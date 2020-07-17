@@ -464,6 +464,20 @@ def simple_shift_right(clk, ce, reset, dout, debug):
 
 	return instances()
 
+@block
+def concat_const(clk, ce, reset, dout, debug):
+	"Concat with constant string vector"
+	counter = Signal(modbv(0)[8:])
+	cr = ResetSignal(0, 1, isasync = False)
+	ctr = up_counter(clk, ce, cr, counter)
+
+	@always_comb
+	def assign():
+		dout.next = concat(counter[4:1], "00100")
+		cr.next = reset
+		debug.next = False
+
+	return instances()
 
 @block
 def dynamic_slice(clk, ce, reset, dout, debug):
@@ -498,9 +512,9 @@ def dynamic_slice(clk, ce, reset, dout, debug):
 UUT_LIST = [ simple_expr, bool_ops, simple_reset_expr, proc_expr, process_variables, simple_variable,
 	module_variables, simple_arith, simple_cases, simple_resize_cases, lfsr8_1, counter_extended]
 
-UUT_LIST += [ simple_sr, simple_shift_right ]
-
 UUT_LIST += [ unused_pin, ]
+
+UUT_LIST += [ simple_sr, simple_shift_right, concat_const ]
 
 UUT_UNRESOLVED_LIST = [ dynamic_slice, if_expr, assign_slice_legacy, assign_slice_new ]
 

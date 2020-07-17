@@ -24,7 +24,7 @@ def Rom(addr, data, INIT_DATA):
 	def simulation():
 		data.next = INIT_DATA[addr]
 
-	@synthesis(myhdl_builtin)
+	@inference(myhdl_builtin)
 	def implementation(module, interface):
 		in_addr = interface.addPort("addr")
 		out_data = interface.addPort("data", True)

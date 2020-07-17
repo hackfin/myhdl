@@ -45,7 +45,7 @@ def _my_debug(details):
 def _dummy_debug(x):
 	pass
 
-_debug = _my_debug
+_debug = _dummy_debug
 
 class SynthesisObject:
 	ignoreSimulation = True
@@ -55,6 +55,7 @@ class SynthesisObject:
 		self.func = func
 		self.name = func.__name__
 		self.method = methodclass
+		self.callinfo = _getCallInfo()
 
 	def infer(self, module, interface):
 		if hasattr(module, 'name'):
@@ -167,4 +168,7 @@ class blackbox(block):
 		return _BlackBox(self.func, self, name, self.srcfile,
 					  self.srcline, *args, **kwargs)
 
+class GeneratorClass:
+	def implement(self):
+		raise AssertionError("Must implement an .implement() member function")
 

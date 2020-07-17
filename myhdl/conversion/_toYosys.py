@@ -23,7 +23,7 @@ from myhdl.conversion.analyze_ng import (_analyzeGens,
 
 from myhdl import intbv, concat, delay
 
-from myhdl._blackbox import _BlackBox
+from myhdl._blackbox import _BlackBox, GeneratorClass
 
 # Allow support of not nice legacy:
 __legacy__ = True
@@ -334,7 +334,20 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		elif f is int:
 			val = node.args[0]
 			self.visit(val)
-			node.syn = val.syn
+			try:
+				node.syn = val.syn
+			except AttributeError:
+				if hasattr(val, 'value'):
+					v = val.value
+				else:
+					try:
+						v = int(val.obj)
+					except:
+						self.raiseError(node, "Unsupported synthesis construct for `%s`" % f.__name__)
+				sm = SynthesisMapper(SM_WIRE)
+				sm.q = ConstSignal(v)
+				node.syn = sm
+
 		elif f is concat:
 			self.dbg(node, GREEN, "CONCAT", "")
 			q = self.context.addSignal(None, 0)
@@ -348,21 +361,42 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			self.dbg(node, REDBG, "IGNORED FUNCTION", f)
 		elif f is myhdl.StopSimulation:
 			self.dbg(node, REDBG, "RAISE FUNCTION", f)
+		elif isinstance(f, GeneratorClass):
+			self.dbg(node, BLUEBG, "CUSTOM_GENERATOR", f.__name__)
+			args = []
+			for arg in node.args:
+				self.visit(arg)
+				args.append(arg.syn.q)
+
+			# Call inference method to retrieve a synthesis object
+			bb = f.implement(node, *args)
+			sm = SynthesisMapper(SM_WIRE)
+			bb.infer(self.context, sm) # We pass the synthesis mapper object as interface
+			node.syn = sm
 		else:
 			args = []
 			for i in node.args:
 				self.visit(i)
 				if not hasattr(i, 'value'):
-					self.raiseError(node, "Unsupported (signal?) argument type for %s()" % f.__name__)
-					# self.dbg(node, REDBG, "SYNTH_FUNCTION", "synthesized result to func %s" % f.__name__)
+					# self.raiseError(node, "Unsupported (signal?) argument type for %s()" % f.__name__)
+					self.dbg(node, REDBG, "SYNTH_FUNCTION", "synthesized result to func %s" % f.__name__)
 				else:
 					args.append(i.value) # Static value
 			# except AttributeError:
 			#	self.raiseError(node, "Unsupported argument type %s" % node.args)
 
-			self.dbg(node, REDBG, "FUNCTION ", "fn: %s args: %s" % (f.__name__, repr(args)))
+			if hasattr(node, 'obj'):
+				if isinstance(node.obj, _BulkSignalBase):
+					self.dbg(node, REDBG, "BULK METHOD", "fn: %s args: %s" % (f.__name__, repr(args)))
+					result = f(node.obj, *args)
+				else:
+					if hasattr(f, '__self__'):
+						self.raiseError("Unbound function for this class not supported")
+					result = f(*args)
+			else:
+				self.dbg(node, REDBG, "FUNCTION ", "fn: %s args: %s" % (f.__name__, repr(args)))
+				result = f(*args)
 
-			result = f(*args)
 			if isinstance(result, intbv):
 				self.dbg(node, VIOBG, "FUNCTION intbv", "size: %d" % len(result))
 				l = len(result)
@@ -412,9 +446,12 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		except OverflowError:
 			self.raiseError(node, "Overflow error for value %d" % (node.value))
 
-#
-#	def visit_Str(self, node):
-#		print(_n())
+	def visit_Str(self, node):
+		try:
+			v = int(node.s, 2)
+			node.syn = ConstDriver(v, len(node.s))
+		except ValueError:
+			pass
 #
 #	def visit_Continue(self, node, *args):
 #		print(_n())
@@ -673,7 +710,10 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			# If subscript is a signal, we have a memory addressing situation:
 			if isinstance(v.obj, _Signal):
 				# Memory parameters:
-				node.syn = node.value.syn # Pass on
+				try:
+					node.syn = node.value.syn # Pass on
+				except AttributeError:
+					self.raiseError(node, "Can not synthesize, %s" % sys.exc_info()[1])
 				node.syn.memid = PID(node.value.id)
 				node.syn.addrsig = node.slice.value.obj
 				self.dbg(node, REDBG, "MEMORY PORT FOR '%s', addr: %s" % (node.value.id, v.obj._name))
@@ -714,7 +754,7 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			self.accessIndex(node)
 		else:
 			self.dbg(node, REDBG, "UNHANDLED INDEX", type(obj))
-			raise Synth_Nosupp("Can't handle this YET")
+			raise Synth_Nosupp("Can't handle indexing of data type %s" % type(obj))
 	
 
 	def visit_stmt(self, body):
@@ -957,12 +997,12 @@ def collect_generators(instance, absnames):
 	return genlist
 
 		
-def infer_handle_interface(design, instance, propagate_io_properties = False):
+def infer_handle_interface(design, instance, public, propagate_io_properties = False):
 	instance.infer_interface()
 	# Add module with implementation (not instance) name
 	# The name is a unique key mangled from the interface
 	key = instance.create_key()
-	m = design.addModule(key, instance, True)
+	m = design.addModule(key, instance, public)
 	instance.module = m
 	parameters = inspect.signature(instance.obj.func).parameters.items()
 
@@ -1015,7 +1055,7 @@ def infer_handle_interface(design, instance, propagate_io_properties = False):
 
 def infer_rtl(h, instance, design):
 	print(BLUEBG + "\tInfer blackbox: '%s'" % instance.name + OFF)
-	m = infer_handle_interface(design, instance)
+	m = infer_handle_interface(design, instance, not h.private)
 	intf = BBInterface("bb_" + instance.name, m)
 	impl = instance.obj
 	impl.infer(m, intf)
@@ -1034,7 +1074,7 @@ def infer_rtl(h, instance, design):
 def convert_rtl(h, instance, design):
 				
 
-	m = infer_handle_interface(design, instance, True)
+	m = infer_handle_interface(design, instance, not h.private, True)
 
 	m.collectMemories(instance)
 
@@ -1064,12 +1104,9 @@ def wireup_rtl(h, instance, design, fixup = True):
 	print(76 * '=')
 	for inst in instance.instances:
 		key = inst.create_key()
-		print("++++++++ %s: %s  ++++++++" % (inst.name, key))
+		print("++++++++ %s: %s (%s) ++++++++" % (inst.name, key, "Cell" if inst.cell else "Module"))
 
-		# Reference to instanced module:
-		im = inst.module
-
-		c = m.addCell(inst.name, key, True)
+		c = m.addCell(inst.name, key, not h.private)
 		d = inst.obj.argdict.copy()
 
 		for n, i in inst.wiremap.items():
@@ -1154,6 +1191,7 @@ class YosysModuleConvertor:
 		self.name = None
 		self.design = None
 		self.trace = False
+		self.private = False # True when using private IDs for sub modules
 
 	def __call__(self, blkfunc, *args, **kwargs):
 
@@ -1162,7 +1200,7 @@ class YosysModuleConvertor:
 		else:
 			name = str(self.name)
 
-		h = Hierarchy(name, blkfunc)
+		h = Hierarchy(name, blkfunc, self.private)
 
 		_genUniqueSuffix.reset()
 		_enumTypeSet.clear()
@@ -1172,7 +1210,7 @@ class YosysModuleConvertor:
 		infer_interface(blkfunc)
 		# dump_hierarchy(h, blkfunc)
 		top = convert_hierarchy(h, blkfunc, self.design, self.trace)
-		self.design.set_top_module(top)
+		self.design.set_top_module(top, h.private)
 
 
 toYosysModule = YosysModuleConvertor()

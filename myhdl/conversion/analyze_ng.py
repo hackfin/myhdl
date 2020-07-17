@@ -35,7 +35,7 @@ import myhdl
 import myhdl
 from myhdl import *
 from myhdl import ConversionError
-from myhdl._blackbox import SynthesisObject
+from myhdl._blackbox import SynthesisObject, GeneratorClass
 from myhdl._always_comb import _AlwaysComb
 from myhdl._always_seq import _AlwaysSeq
 from myhdl._always import _Always
@@ -454,7 +454,13 @@ class _AnalyzeVisitor(ast.NodeVisitor, _ConversionMixin):
 				suf = _genUniqueSuffix.next()
 				obj._setName(n + suf)
 		if node.obj is None:  # attribute lookup failed
-			self.raiseError(node, _error.UnsupportedAttribute, node.attr)
+			if node.attr in ('val', 'value'):
+				if hasattr(obj, 'val'):
+					node.obj = obj
+				else:
+					self.raiseError(node, _error.UnsupportedAttribute, node.attr)
+			else:
+				self.raiseError(node, _error.UnsupportedAttribute, node.attr)
 
 	def visit_Assign(self, node):
 		target, value = node.targets[0], node.value
@@ -591,8 +597,11 @@ class _AnalyzeVisitor(ast.NodeVisitor, _ConversionMixin):
 					self.access = _access.INPUT
 				if n in tree.inputs:
 					self.visit(arg)
+		elif isinstance(f, GeneratorClass):
+			pass
 		elif type(f) is MethodType:
-			self.raiseError(node, _error.NotSupported, "method call: '%s'" % f.__name__)
+			pass
+			# self.raiseError(node, _error.NotSupported, "method call: '%s'" % f.__name__)
 		else:
 			debug_info = [e for e in ast.iter_fields(node.func)]
 			raise AssertionError("Unexpected callable %s" % str(debug_info))
