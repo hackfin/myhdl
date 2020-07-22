@@ -1,7 +1,7 @@
 from pyosys import libyosys as ys
 import ast
 from myhdl._Signal import _Signal
-from myhdl._ShadowSignal import _ShadowSignal, _TristateDriver
+from myhdl._ShadowSignal import _ShadowSignal, _TristateSignal, _TristateDriver
 from myhdl._bulksignal import _BulkSignalBase
 from myhdl import intbv, EnumType, EnumItemType
 from myhdl._block import _Block, block
@@ -27,6 +27,9 @@ def YSignal(x):
 def ConstSignal(x, l = None):
 	c = Const(x, l)
 	return ys.SigSpec(c.get())
+
+def HighZ(l):
+	return ConstSignal(ys.State.Sz, l)
 
 def NEW_ID(name, node, ext):
 	return ys.new_id(name, node.lineno, ext)
@@ -343,7 +346,7 @@ class Module:
 		ast.Not		 : ys.Module.addNot
 	}
 
-	def __init__(self, m, implementation):
+	def __init__(self, m, implementation, design):
 		self.module = m
 		self.wires = {} # Local module wires
 		self.cache_mem = {}
@@ -357,13 +360,13 @@ class Module:
 		self.guard = {}
 		self.implementation = implementation
 		self.array_limit = 1024
+		self.parent_design = design
 
 		def dummy(a, col = None):
 			pass
 
 		if not ENABLE_DEBUG:
 			self.debugmsg = dummy
-
 
 		self._namespace = \
 			[ self.memories, self.arrays, self.wires, self.parent_signals ]
@@ -694,7 +697,9 @@ class Module:
 
 			if isinstance(arg, _Signal):
 				if not name in iomap:
-					if name in inputs:
+					if isinstance(arg, _TristateSignal):
+						otype = INOUT
+					elif name in inputs:
 						if name in outputs:
 							otype = INOUT
 						else:
@@ -738,7 +743,7 @@ class Module:
 				self.wireid[s._id] = n
 				return w
 			else:
-				self.debugmsg("%s Wire '%s' id:`%s` init: %d" % (wtype, n, s._id, s._init), col = BLUEBG)
+				self.debugmsg("%s Wire '%s' id:`%s` init: %s" % (wtype, n, s._id, s._init), col = BLUEBG)
 				l = get_size(s)
 				w = self.addSignal(PID(n + "::wire"), l)
 				t = w.as_wire()
@@ -879,7 +884,7 @@ class Module:
 		# blackbox interface
 		sig_addr = intf.createSignal(wire_addr, "rom_addr")
 		rom = yosys_bb.Rom(sig_addr, sig_data, romobj.rom)
-		rom.infer(self, intf)
+		rom.infer(self, intf, yosys_bb._yosys)
 		# Note we don't wire up
 		
 		outs = intf.getOutputs()

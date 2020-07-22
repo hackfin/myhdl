@@ -371,7 +371,9 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 			# Call inference method to retrieve a synthesis object
 			bb = f.implement(node, *args)
 			sm = SynthesisMapper(SM_WIRE)
-			bb.infer(self.context, sm) # We pass the synthesis mapper object as interface
+			sm.q = HighZ(1)
+			# We pass the synthesis mapper object as interface
+			bb.infer(self.context, sm, self.context.parent_design.rule)
 			node.syn = sm
 		else:
 			args = []
@@ -613,6 +615,8 @@ class _ConvertVisitor(ast.NodeVisitor, _ConversionMixin, VisitorHelper):
 		v = node.value
 		if isinstance(v, int) or isinstance(v, bool):
 			sm = ConstDriver(v)
+		elif v == None:
+			sm = HighZDriver()
 		else:
 			self.raiseError(node, "Unsupported constant")
 		node.syn = sm
@@ -952,6 +956,8 @@ class _ConvertAlwaysCombVisitor(_ConvertVisitor):
 				gsig = m.findWireByName(name)
 				if gsig:
 					gsig = m.findWireByName(name)
+					if not sig[0]:
+						self.raiseError(stmt, "Driver did not return signal")
 					m.connect(gsig, sig[0])
 				else:
 					self.variables[name].q = sig[0]
@@ -1058,7 +1064,7 @@ def infer_rtl(h, instance, design):
 	m = infer_handle_interface(design, instance, not h.private)
 	intf = BBInterface("bb_" + instance.name, m)
 	impl = instance.obj
-	impl.infer(m, intf)
+	impl.infer(m, intf, design.rule)
 	intf.wireup()
 
 	# infer_obj.dump()

@@ -26,6 +26,7 @@ from myhdl.conversion._misc import (_get_argnames, _error)
 from pyosys import libyosys as ys
 
 from .ysmodule_ng import *
+from .yosys_bb import _yosys
 from .ysdebug import *
 
 from .synmapper import *
@@ -50,6 +51,12 @@ class Synth_Nosupp(Exception):
 	def __str__(self):
 		return repr(self.value)
 
+class YosysInferenceRule(_yosys):
+	"Yosys inference rule to use"
+	def new_id(node, name):
+		return NEW_ID(__name__, node, name)
+
+yosys = YosysInferenceRule # yosys blackbox inference
 
 def ConstDriver(val, bit_len = None):
 	if val < 0:
@@ -61,7 +68,12 @@ def ConstDriver(val, bit_len = None):
 	sm.q = ConstSignal(val, bit_len)
 
 	return sm
-		
+
+def HighZDriver():
+	sm = SynthesisMapper(SM_WIRE)
+	sm.q = HighZ(1)
+
+	return sm
 
 def SigBit(x):
 	if isinstance(x, Wire):
@@ -75,6 +87,15 @@ class Design:
 		self.design = ys.Design()
 		self.name = name
 		self.modules = {}
+		self.rule = YosysInferenceRule # default instance rule
+		self.mapper = None
+
+	def map(self, **kwargs):
+		if not self.mapper:
+			raise SystemError("No mapper defined")
+
+		# Call the mapper 'method':
+		self.mapper.map(self, **kwargs)
 
 	def get(self):
 		return self.design
@@ -86,7 +107,7 @@ class Design:
 		else:
 			n = ID(name)
 		m = self.design.addModule(n)
-		m = Module(m, implementation)
+		m = Module(m, implementation, self)
 		self.modules[name] = m
 		return m
 
@@ -96,7 +117,7 @@ class Design:
 		ys.run_pass("hierarchy -top %s%s" % (pre, key), self.design)
 
 	def top_module(self):
-		return Module(self.design.top_module(), None)
+		return Module(self.design.top_module(), None, self)
 
 	def run(self, cmd, silent = True):
 		"Careful. This function can exit without warning"
@@ -1162,13 +1183,6 @@ Used for separation of common functionality of visitor classes"""
 # Factory auxiliaries:
 #
 
-class yosys:
-	def __init__(self):
-		self.id = "YOSYS_SYNTHESIS"
-	def new_id(node, name):
-		return NEW_ID(__name__, node, name)
-
-		
 def convert_wires(m, c, a, n, force = False):
 	if isinstance(a, _Signal):
 		sig = m.findWire(a)
@@ -1227,6 +1241,8 @@ yosys design. Typically, one derives from it and inserts own initialization"""
 		print("Implementation:", self.__doc__)
 	def instance(self, name):
 		design = Design(name)
+		if isinstance(self, YosysInferenceRule):
+			design.mapper = self
 		return design
 
 # Compatibility:

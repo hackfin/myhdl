@@ -1,10 +1,20 @@
 # Board supply package for Versa ECP5 board
 #
-# (c) section5.ch
+# (c) 2020 section5.ch
 #
 
-from myhdl.conversion.yshelper import BoardSupplyPackage, Design
+"""A board supply package is implemented as a class inheriting from
+both:
 
-class bsp(BoardSupplyPackage):
+ * The BoardSupplyPackage based class
+ * A synthesis rules class, based on yshelper.YosysInferenceRule
+"""
+
+from myhdl.conversion.yshelper import BoardSupplyPackage
+
+from ..yosys.ecp5.rules import SynthesisRulesECP5
+
+class bsp(BoardSupplyPackage, SynthesisRulesECP5):
 	"Board supply for ECP5 Versa eval kit"
-	pass	
+	def __init__(self):
+		SynthesisRulesECP5.__init__(self)
