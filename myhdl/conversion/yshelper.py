@@ -19,13 +19,14 @@ from myhdl._block import _Block
 
 from myhdl._ShadowSignal import _ShadowSignal, _SliceSignal, _TristateDriver
 from myhdl._bulksignal import _BulkSignalBase
-from myhdl._blackbox import _BlackBox
+from myhdl._blackbox import _BlackBox, GeneratorClass
 
 from myhdl.conversion._misc import (_get_argnames, _error)
 
 from pyosys import libyosys as ys
 
 from .ysmodule_ng import *
+from .yosys_bb import _yosys
 from .ysdebug import *
 
 from .synmapper import *
@@ -50,6 +51,12 @@ class Synth_Nosupp(Exception):
 	def __str__(self):
 		return repr(self.value)
 
+class YosysInferenceRule(_yosys):
+	"Yosys inference rule to use"
+	def new_id(node, name):
+		return NEW_ID(__name__, node, name)
+
+yosys = YosysInferenceRule # yosys blackbox inference
 
 def ConstDriver(val, bit_len = None):
 	if val < 0:
@@ -61,7 +68,12 @@ def ConstDriver(val, bit_len = None):
 	sm.q = ConstSignal(val, bit_len)
 
 	return sm
-		
+
+def HighZDriver():
+	sm = SynthesisMapper(SM_WIRE)
+	sm.q = HighZ(1)
+
+	return sm
 
 def SigBit(x):
 	if isinstance(x, Wire):
@@ -75,6 +87,15 @@ class Design:
 		self.design = ys.Design()
 		self.name = name
 		self.modules = {}
+		self.rule = YosysInferenceRule # default instance rule
+		self.mapper = None
+
+	def map(self, **kwargs):
+		if not self.mapper:
+			raise SystemError("No mapper defined")
+
+		# Call the mapper 'method':
+		self.mapper.map(self, **kwargs)
 
 	def get(self):
 		return self.design
@@ -86,16 +107,17 @@ class Design:
 		else:
 			n = ID(name)
 		m = self.design.addModule(n)
-		m = Module(m, implementation)
+		m = Module(m, implementation, self)
 		self.modules[name] = m
 		return m
 
-	def set_top_module(self, top):
+	def set_top_module(self, top, private = False):
 		key = create_key(top.obj)
-		ys.run_pass("hierarchy -top \\%s" % key, self.design)
+		pre = "$" if private else "\\"
+		ys.run_pass("hierarchy -top %s%s" % (pre, key), self.design)
 
 	def top_module(self):
-		return Module(self.design.top_module(), None)
+		return Module(self.design.top_module(), None, self)
 
 	def run(self, cmd, silent = True):
 		"Careful. This function can exit without warning"
@@ -488,13 +510,14 @@ differing instances of the same architecture"""
 			for i in modinst.subs:
 				self._getHierarchyHelper(level + 1, i, hierarchy)
 
-	def __init__(self, name, modinst):
+	def __init__(self, name, modinst, private = False):
 		self.top = modinst
 		self.hierarchy = hierarchy = []
 		self.absnames = absnames = {}
 		self.users = {}
 		self.instdict = {}
 		self._getHierarchyHelper(1, modinst, hierarchy)
+		self.private = private
 		# compatibility with _extractHierarchy
 		# walk the hierarchy to define relative and absolute names
 		names = {}
@@ -543,12 +566,13 @@ Used for separation of common functionality of visitor classes"""
 			r = self.const_eval(node.right)
 			f = self._opmap_reduce_const[type(node.op)]
 			return f(l, r)
-		elif isinstance(node, ast.Name):
-			return node.value
-		elif isinstance(node, ast.Num):
-			return node.n
 		elif hasattr(node, "value"):
 			return node.value
+		elif isinstance(node, ast.Name):
+			# Resolve this one and assume it has an int conversion method:
+			return int(node.obj)
+		elif isinstance(node, ast.Num):
+			return node.n
 		else:
 			self.raiseError(node, "Unsupported operator '%s" % type(node).__name__)
 
@@ -599,7 +623,7 @@ Used for separation of common functionality of visitor classes"""
 				self.SigAss = obj._name
 				self.visit(node.value)
 			elif node.attr == 'posedge':
-				self.dbg(obj, VIOBG, "POSEDGE** ",  "clk " + repr(node))
+				self.dbg(obj, VIOBG, "POSEDGE** ",	"clk " + repr(node))
 				self.polarity = 1
 			elif node.attr == 'negedge':
 				self.polarity = -1
@@ -616,6 +640,19 @@ Used for separation of common functionality of visitor classes"""
 			e = getattr(obj, node.attr)
 			sm.q = ConstSignal(int(e), obj._nrbits)
 			node.syn = sm
+#		RESERVED for now
+#		if isinstance(obj, _BulkSignalBase):
+#			if node.attr == 'set':
+#				node.obj = self.getObj(node.value)
+#			else:
+#				self.raiseError(node, "Unsupported Bulk signal method '%s'" % node.attr)
+		elif isinstance(obj, GeneratorClass):
+			if node.attr == 'val':
+				sm = SynthesisMapper(SM_WIRE)
+				sm.q = ConstSignal(obj.val)
+				node.syn = sm
+			else:
+				self.raiseError(node, "Unsupported Generator method '%s'" % node.attr)
 		else:
 			self.dbg(obj, REDBG, "getAttr ",	"unknown " + repr(obj))
 
@@ -770,10 +807,10 @@ Used for separation of common functionality of visitor classes"""
 				for n, drv in sm.drivers.items():
 					y, other, default = drv
 					if default:
-						self.dbg(stmt, REDBG, "TIE DEFAULT", "%s" % n)
+						self.dbg(stmt, VIOBG, "TIE DEFAULT", "%s" % n)
 						self.assign_default(n, default, default_assignments, True)
 					if other:
-						self.dbg(stmt, REDBG, "TIE OTHER", "%s" % n)
+						self.dbg(stmt, VIOBG, "TIE OTHER", "%s" % n)
 						self.assign_default(n, other, default_assignments, True)
 
 					if n in default_assignments:
@@ -886,7 +923,7 @@ Used for separation of common functionality of visitor classes"""
 
 		if isinstance(stmt, ast.Assign):
 			name = stmt.id
-			self.dbg(stmt, BLUEBG, "SET DEFAULT", name)
+			# self.dbg(stmt, BLUEBG, "SET DEFAULT", name)
 			if not name in drv:
 				lineno = self.getLineNo(stmt)
 				drv[name] = [ ("l:%d$default_%d" % (lineno, i), None) for i in range(n) ]
@@ -904,7 +941,6 @@ Used for separation of common functionality of visitor classes"""
 		elif isinstance(stmt, ast.If):
 			if stmt.ignore:
 				return
-
 			for t in stmt.drivers.items():
 				name, i = t
 				mux_id = self.node_tag(stmt)
@@ -917,14 +953,14 @@ Used for separation of common functionality of visitor classes"""
 						"(other) missing assignments, assuming defaults for %s" % name)
 					ret0 = self.assign_default(name, other, defaults)
 					if not ret0:
-						self.dbg(stmt, REDBG, "APPEND OPEN OTHER", "%s" % name)
+						self.dbg(stmt, VIOBG, "APPEND OPEN OTHER", "%s" % name)
 
 				if default:
 					self.dbg(stmt, REDBG, "IMPLICIT_WARNING", \
 						"(default) missing assignments, assuming defaults %s" % name)
 					ret1 = self.assign_default(name, default, defaults)
 					if not ret1:
-						self.dbg(stmt, REDBG, "APPEND OPEN DEFAULT", "%s" % name)
+						self.dbg(stmt, VIOBG, "APPEND OPEN DEFAULT", "%s" % name)
 
 				if ret0 or ret1:
 					if name in implicit:
@@ -982,7 +1018,7 @@ Used for separation of common functionality of visitor classes"""
 
 		m = self.context
 		for dr_id, drivers in node.drivers.items():
-			self.dbg(node, GREEN, "PMUX WALK DRV >>>", dr_id)
+			# self.dbg(node, GREEN, "PMUX WALK DRV >>>", dr_id)
 			w = m.findWireByName(dr_id)
 			proto = w if w else self.variables[dr_id].q
 			size = proto.size()
@@ -1035,8 +1071,9 @@ Used for separation of common functionality of visitor classes"""
 		decision_signals = self.create_mux_table(node, implicit)
 
 		m = self.context
+		c = 0
 		for dr_id, drivers in node.drivers.items():
-			self.dbg(node, GREEN, "MUX WALK DRV >>>", dr_id)
+			# self.dbg(node, GREEN, "MUX WALK DRV >>>", dr_id)
 			w = m.findWireByName(dr_id)
 			proto = w if w else self.variables[dr_id].q
 			size = proto.size()
@@ -1060,7 +1097,8 @@ Used for separation of common functionality of visitor classes"""
 						default = m.addSignal(name, size)
 					drv = default
 
-				name = self.genid(mux_id, "MUX_%s" % dr_id)
+				name = self.genid(mux_id, "MUX%d_%s" % (c, dr_id))
+				c += 1
 				other = m.addSignal(None, size)
 				s = decision_signals[i]
 				m.addMux(name, other, drv, s, y)
@@ -1086,7 +1124,8 @@ Used for separation of common functionality of visitor classes"""
 				drv = default
 
 			s = decision_signals[-1]
-			name = self.genid(mux_id, "MUX_%s" % dr_id)
+			name = self.genid(mux_id, "MUX%d_%s" % (c, dr_id))
+			c += 1
 			m.addMux(name, next_other, drv, s, y)
 
 			# Insert output and `else_sig` into multiplexer
@@ -1144,12 +1183,6 @@ Used for separation of common functionality of visitor classes"""
 # Factory auxiliaries:
 #
 
-class yosys:
-	def __init__(self):
-		self.id = "YOSYS_SYNTHESIS"
-
-
-		
 def convert_wires(m, c, a, n, force = False):
 	if isinstance(a, _Signal):
 		sig = m.findWire(a)
@@ -1208,6 +1241,8 @@ yosys design. Typically, one derives from it and inserts own initialization"""
 		print("Implementation:", self.__doc__)
 	def instance(self, name):
 		design = Design(name)
+		if isinstance(self, YosysInferenceRule):
+			design.mapper = self
 		return design
 
 # Compatibility:

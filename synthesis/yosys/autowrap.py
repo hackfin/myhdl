@@ -182,8 +182,9 @@ class AutoSynthesisObject(SynthesisObject):
 		self.name = identifier
 		self.typename = typename
 		self.mapping = mapping
+		self.method = ys.yosys
 
-	def infer(self, module, interface):
+	def infer(self, module, interface, unused_rule):
 		"""The inference method defines how the connections outside
 the blackbox are made. For identical signal mapping (self.mapping == None),
 it sets the ports of the unit according to the interface signal types."""
@@ -363,7 +364,7 @@ def insert_sig(d, prefix, sig):
 	elif isinstance(sig, bool):
 		d[name] = [(name, 1)]
 	else:
-		raise ValueError("Unsupported type", type(sig))	
+		raise ValueError("Unsupported type", type(sig)) 
 
 def unroll_bulk(args, argnames):
 	"""Bulk class unroller. Unrolls all bit vectors of name V into a map

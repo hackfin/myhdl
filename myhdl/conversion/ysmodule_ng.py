@@ -1,7 +1,7 @@
 from pyosys import libyosys as ys
 import ast
 from myhdl._Signal import _Signal
-from myhdl._ShadowSignal import _ShadowSignal, _TristateDriver
+from myhdl._ShadowSignal import _ShadowSignal, _TristateSignal, _TristateDriver
 from myhdl._bulksignal import _BulkSignalBase
 from myhdl import intbv, EnumType, EnumItemType
 from myhdl._block import _Block, block
@@ -28,6 +28,9 @@ def ConstSignal(x, l = None):
 	c = Const(x, l)
 	return ys.SigSpec(c.get())
 
+def HighZ(l):
+	return ConstSignal(ys.State.Sz, l)
+
 def NEW_ID(name, node, ext):
 	return ys.new_id(name, node.lineno, ext)
 
@@ -50,7 +53,6 @@ def get_size(s):
 		return s._nrbits
 	else:
 		raise AssertionError
-
 
 def match(a, b):
 	"Match signal lengths"
@@ -164,7 +166,8 @@ class Const:
 		elif isinstance(value, EnumItemType):
 			self.const = ys.Const(int(value), value._nrbits)
 		else:
-			raise Synth_Nosupp("Unsupported type %s" % type(value).__name__)
+			raise ValueError("Unsupported Const type `%s`" % type(value))
+
 
 	def fromIntbv(self, value, bits):
 		v = int(value)
@@ -307,9 +310,9 @@ class Module:
 	EX_COND, EX_FIRST, EX_SAME, EX_CARRY, EX_TWICE, EX_TRUNC = range(6)
 
 	_unopmap = {
-		ast.USub	 :   ys.Module.addNeg,
-		ast.Invert	 :   ys.Module.addNot,
-		ast.Not		 :   ys.Module.addNot,
+		ast.USub	 :	 ys.Module.addNeg,
+		ast.Invert	 :	 ys.Module.addNot,
+		ast.Not		 :	 ys.Module.addNot,
 	}
 
 	_binopmap = {
@@ -338,12 +341,12 @@ class Module:
 	}
 
 	_boolopmap = {
-		ast.And	     : ys.Module.addReduceAnd,
-		ast.Or       : ys.Module.addReduceOr,
-		ast.Not	     : ys.Module.addNot
+		ast.And		 : ys.Module.addReduceAnd,
+		ast.Or		 : ys.Module.addReduceOr,
+		ast.Not		 : ys.Module.addNot
 	}
 
-	def __init__(self, m, implementation):
+	def __init__(self, m, implementation, design):
 		self.module = m
 		self.wires = {} # Local module wires
 		self.cache_mem = {}
@@ -357,13 +360,13 @@ class Module:
 		self.guard = {}
 		self.implementation = implementation
 		self.array_limit = 1024
+		self.parent_design = design
 
 		def dummy(a, col = None):
 			pass
 
 		if not ENABLE_DEBUG:
 			self.debugmsg = dummy
-
 
 		self._namespace = \
 			[ self.memories, self.arrays, self.wires, self.parent_signals ]
@@ -446,9 +449,13 @@ class Module:
 
 	def connect(self, dst, src):
 		if dst.size() != src.size():
-			print(dst.size(), src.size())
+			self.debugmsg("CONNECT: Size mismatch: %d != %d" % (src.size(), dst.size()))
+			if src.is_wire():
+				srcname = src.as_wire().name
+			else:
+				srcname = "[MAYBE CONST]"
 			raise ValueError("Signals '%s' and '%s' don't have the same size" % \
-				(dst.as_wire().name, src.as_wire().name))
+				(dst.as_wire().name, srcname))
 		return self.module.connect(dst, src)
 
 	def guard_name(self, name, which):
@@ -506,7 +513,7 @@ class Module:
 	def getCorrespondingWire(self, sig):
 		if not sig._id:
 			if sig.read or sig.driven:
-				raise ValueError("Can not have None as ID for %s::`%s`.\n"  % (self.name, sig._name) + \
+				raise ValueError("Can not have None as ID for %s::`%s`.\n"	% (self.name, sig._name) + \
 				"Possibly, a class signal member is unused in this hierarchy level\n" + \
 				"You may have to explicitely set the ID in the top level wrapper to use\n" + \
 				"this signal in synthesis or use a BulkSignal class in the interface.")
@@ -690,7 +697,9 @@ class Module:
 
 			if isinstance(arg, _Signal):
 				if not name in iomap:
-					if name in inputs:
+					if isinstance(arg, _TristateSignal):
+						otype = INOUT
+					elif name in inputs:
 						if name in outputs:
 							otype = INOUT
 						else:
@@ -734,7 +743,7 @@ class Module:
 				self.wireid[s._id] = n
 				return w
 			else:
-				self.debugmsg("%s Wire '%s' id:`%s` init: %d" % (wtype, n, s._id, s._init), col = BLUEBG)
+				self.debugmsg("%s Wire '%s' id:`%s` init: %s" % (wtype, n, s._id, s._init), col = BLUEBG)
 				l = get_size(s)
 				w = self.addSignal(PID(n + "::wire"), l)
 				t = w.as_wire()
@@ -875,7 +884,7 @@ class Module:
 		# blackbox interface
 		sig_addr = intf.createSignal(wire_addr, "rom_addr")
 		rom = yosys_bb.Rom(sig_addr, sig_data, romobj.rom)
-		rom.infer(self, intf)
+		rom.infer(self, intf, yosys_bb._yosys)
 		# Note we don't wire up
 		
 		outs = intf.getOutputs()

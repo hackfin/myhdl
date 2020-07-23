@@ -13,9 +13,10 @@ from myhdl import *
 # Do not import any yshelper stuff in here.
 # Use the interface class (`interface` parameter in implementation()
 
-class myhdl_builtin:
-	def __init__(self):
-		pass
+class _yosys:
+	"Yosys default synthesis rule"
+	# Currently a stub
+
 
 @blackbox
 def Rom(addr, data, INIT_DATA):
@@ -24,8 +25,8 @@ def Rom(addr, data, INIT_DATA):
 	def simulation():
 		data.next = INIT_DATA[addr]
 
-	@synthesis(myhdl_builtin)
-	def implementation(module, interface):
+	@inference(_yosys)
+	def rom_impl(module, interface):
 		in_addr = interface.addPort("addr")
 		out_data = interface.addPort("data", True)
 
@@ -78,6 +79,4 @@ def Rom(addr, data, INIT_DATA):
 		readport.setParam("CLK_ENABLE", 0) # We're totally async
 
 
-	return simulation, implementation
-
-
+	return simulation, rom_impl

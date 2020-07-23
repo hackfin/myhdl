@@ -45,7 +45,7 @@ def _my_debug(details):
 def _dummy_debug(x):
 	pass
 
-_debug = _my_debug
+_debug = _dummy_debug
 
 class SynthesisObject:
 	ignoreSimulation = True
@@ -55,10 +55,11 @@ class SynthesisObject:
 		self.func = func
 		self.name = func.__name__
 		self.method = methodclass
+		self.callinfo = _getCallInfo()
 
-	def infer(self, module, interface):
+	def infer(self, module, interface, rule):
 		if hasattr(module, 'name'):
-			_debug("Inferring %s for module '%s'" % (self.name, module.name.str()))
+			_debug("Inferring %s for module '%s', rule %s" % (self.name, module.name.str(), self.method))
 			self.func(module, interface)
 		else:
 			raise TypeError("Incompatible module object passed")
@@ -89,6 +90,10 @@ def inference(func):
 	return fact
 
 synthesis = inference
+
+class default_inference_rule:
+	"Default inference rule"
+
 
 class _BlackBox(_Block):
 	def __init__(self, func, deco, name, srcfile, srcline, *args, **kwargs):
@@ -124,13 +129,16 @@ class _BlackBox(_Block):
 				if not inst.modctxt:
 					raise BlockError("ERR %s %s" % (self.name, inst.callername))
 
-	def infer(self, module, interface = None):
+	def infer(self, module, interface = None, rule = default_inference_rule):
 		"Calls inference members of blackbox object"
 		if interface:
 			interface.sigdict = self.sigdict
 		for inst in self.subs:
 			if isinstance(inst, SynthesisObject):
-				inst.infer(module, interface)
+				if inst.method == rule:
+					inst.infer(module, interface, rule)
+				else:
+					_debug("skipping: %s()" % inst.name)
 
 	def implement(self, name, top_name, **kwargs):
 		"""Implements all sub objects of method `name` and renames
@@ -167,4 +175,7 @@ class blackbox(block):
 		return _BlackBox(self.func, self, name, self.srcfile,
 					  self.srcline, *args, **kwargs)
 
+class GeneratorClass:
+	def implement(self):
+		raise AssertionError("Must implement an .implement() member function")
 

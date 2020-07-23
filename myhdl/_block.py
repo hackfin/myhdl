@@ -383,6 +383,8 @@ class _Block(object):
 		elif hdl.lower() == 'yosys_module':
 			converter = myhdl.conversion._toYosys.toYosysModule
 			setattr(converter, 'design', context)
+			if 'private' in kwargs:
+				setattr(converter, 'private', kwargs['private'])
 		else:
 			raise BlockInstanceError('unknown hdl %s' % hdl)
 

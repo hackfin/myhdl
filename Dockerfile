@@ -1,6 +1,6 @@
 FROM hackfin/myhdl_testing:yosys
 
-RUN sudo apt-get update; sudo apt-get install -y python3-pip
+RUN sudo apt-get update; sudo apt-get install -y python3-pip yosys-pyosys
 RUN sudo pip3 install --no-cache graphviz pydotplus notebook nbwavedrom
 
 # Check out specific build recipe:
